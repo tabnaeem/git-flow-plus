@@ -45,9 +45,8 @@ func TestLoaderSaveAndLoadRoundTrip(t *testing.T) {
 
 	r := feature.New()
 	r.Upsert(feature.Feature{
-		ID: "LOGIN", Branch: "feature/LOGIN", MergedIntoDevelop: true,
-		MergeCommit: "abc123", UnitTested: true, Approved: true,
-		IncludedInRelease: true, Release: "5.3",
+		ID: "LOGIN", Branch: "feature/LOGIN", MergeCommit: "abc123",
+		State: feature.StateReleased, Release: "5.3",
 	})
 
 	if err := loader.Save(dir, r); err != nil {
@@ -65,7 +64,7 @@ func TestLoaderSaveAndLoadRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("Find(LOGIN) = false after round trip")
 	}
-	if f.Release != "5.3" || !f.IncludedInRelease || f.MergeCommit != "abc123" {
-		t.Errorf("round-tripped feature = %+v, want Release=5.3 IncludedInRelease=true MergeCommit=abc123", f)
+	if f.Release != "5.3" || f.State != feature.StateReleased || f.MergeCommit != "abc123" {
+		t.Errorf("round-tripped feature = %+v, want Release=5.3 State=Released MergeCommit=abc123", f)
 	}
 }

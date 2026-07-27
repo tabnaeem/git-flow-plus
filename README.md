@@ -4,11 +4,13 @@ Git Flow Plus extends the standard [Git Flow](https://nvie.com/posts/a-successfu
 branching model with enterprise release management, built on three
 permanent branches:
 
-- **`develop`** — ongoing feature development and unit testing. Never the
-  release line.
-- **`staging`** — the release line. Release fixes and DevOps changes merge
-  here; QA builds are cut here; this is where a release actually lives
-  while it's being stabilized.
+- **`develop`** — a temporary integration branch for unit testing. Not
+  part of the release lifecycle, and feature branches no longer come from
+  it — see below.
+- **`staging`** — the release line, and where the release lifecycle
+  begins. Feature branches branch from it; release fixes and DevOps
+  changes merge into it; QA builds are cut from it; this is where a
+  release actually lives while it's being stabilized.
 - **`main`** — production. A release lands here once, at Production Release
   time.
 
@@ -81,44 +83,50 @@ environment variables — see
 ```bash
 git flow init                          # main, staging, develop
 
-git flow feature start LOGIN           # feature/LOGIN, from develop
-# ...develop, commit...
-git flow feature finish LOGIN          # merges into develop; registers LOGIN in the Feature Registry
+git flow feature start LOGIN           # feature/LOGIN, from staging (not develop) — registers LOGIN as Created
+# ...commit, push, open a pull request. There is no `feature finish` —
+# a developer never merges their own feature branch.
 
 git flow release start 5.2             # staging: version.json = 5.2.0.0.1, tags v5.2.0.0.1
 
-git flow release feature approve LOGIN # LOGIN is unit-tested and eligible for Release Planning
-git flow release feature add LOGIN     # Release Planning decision: LOGIN ships in 5.2
+git flow release feature approve LOGIN # Release Manager: LOGIN is ready for Release Planning
+git flow release feature add LOGIN     # Release Manager merges feature/LOGIN into staging;
+                                        # the feature counter advances: 5.2.0.0.1 -> 5.3.0.0.1
+                                        # feature/LOGIN is NOT deleted — it stays alive for the QA cycle
+
+# QA reports an issue; the developer pushes another commit to feature/LOGIN.
+# Git Flow Plus never auto-syncs it — the Release Manager re-runs:
+git flow release feature add LOGIN     # merges the follow-up commit; version untouched this time
 
 git flow releasefix start BUG-101      # release-fix/BUG-101, from staging
 # ...fix, commit...
-git flow releasefix finish BUG-101     # merges into staging; version UNCHANGED, fix recorded as pending
+git flow releasefix finish BUG-101     # merges into staging (branch stays alive too); version UNCHANGED, fix pending
 
-git flow release build                 # only this changes the version: 5.2.1.0.2, tags v5.2.1.0.2
+git flow release build                 # only this changes Fixes/DevOps/QA: 5.3.1.0.2, tags v5.3.1.0.2
 
-git flow release finish 5.2            # staging -> main -> develop, tags v5.2 (production)
-                                        # LOGIN is now permanently recorded as shipped in 5.2
+git flow release finish 5.2            # staging -> main (develop untouched), tags v5.2 (production)
+                                        # LOGIN is now permanently Released; feature/LOGIN and
+                                        # release-fix/BUG-101 are deleted — only now, not before
 ```
 
-The version only moves when a Release Manager runs `release build` —
-merging release-fix/DevOps branches never does. Similarly, a feature never
-joins a release just because it was merged — a Release Manager has to
-explicitly add it via `release feature add`. See
-[ReleaseManagement.md](ReleaseManagement.md) for the full model and why.
+The version only moves through two operations, both owned by the Release
+Manager: `release feature add` advances the feature counter, `release
+build` advances Fixes/DevOps/QA. Merging a release-fix/DevOps branch never
+does, by itself. See [ReleaseManagement.md](ReleaseManagement.md) for the
+full model and why.
 
 ## Project status
 
 Every command in the original spec is implemented and tested (unit tests
 plus real end-to-end tests against the actual `git` binary), including
 Feature Management and Release Planning (`internal/feature`, `git flow
-release feature ...`), production-grade structured logging, environment-
-aware configuration, and a full cross-platform build/release pipeline
-(`make dist`/`make package`, `.github/workflows/release.yml`) producing
-binaries for Windows, Linux, and macOS on both amd64 and arm64. Not yet
-built: multi-release support (starting a second release while one is
-active is rejected outright, not disambiguated), automated promotion of
-feature code from `develop` onto `staging` (Release Planning is
-bookkeeping-only by design — see
-[ReleaseManagement.md](ReleaseManagement.md#feature-management--release-planning)),
-and package-manager installers (Homebrew, Chocolatey, Scoop, `.deb`,
-`.rpm`, MSI). See [Roadmap.md](Roadmap.md) for the full picture.
+release feature ...` — feature branches now come from staging, are
+genuinely merged by `release feature add`, and stay alive until `release
+finish` deletes them), production-grade structured logging,
+environment-aware configuration, and a full cross-platform build/release
+pipeline (`make dist`/`make package`, `.github/workflows/release.yml`)
+producing binaries for Windows, Linux, and macOS on both amd64 and arm64.
+Not yet built: multi-release support (starting a second release while one
+is active is rejected outright, not disambiguated), and package-manager
+installers (Homebrew, Chocolatey, Scoop, `.deb`, `.rpm`, MSI). See
+[Roadmap.md](Roadmap.md) for the full picture.

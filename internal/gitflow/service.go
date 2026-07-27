@@ -19,8 +19,13 @@ type Service interface {
 	// main and develop branches present, creating them if necessary.
 	Init(ctx context.Context) (InitResult, error)
 
+	// FeatureStart branches feature/<name> from staging. There is no
+	// FeatureFinish — see FeatureMerge.
 	FeatureStart(ctx context.Context, name string) (BranchResult, error)
-	FeatureFinish(ctx context.Context, name string) (BranchResult, error)
+	// FeatureMerge merges feature/<name> into staging without deleting
+	// it, called by internal/release when a Release Manager runs `git
+	// flow release feature add`.
+	FeatureMerge(ctx context.Context, name string) (BranchResult, error)
 
 	HotfixStart(ctx context.Context, name string) (BranchResult, error)
 	HotfixFinish(ctx context.Context, name string) (BranchResult, error)
@@ -29,10 +34,12 @@ type Service interface {
 	SupportFinish(ctx context.Context, name string) (BranchResult, error)
 
 	// ReleaseFinish is the "Production Release" step: merge staging into
-	// main, then main into develop. staging is never deleted — it is a
-	// permanent branch reused by every release cycle. It does not tag;
-	// internal/release creates the production tag itself, referencing the
-	// returned BranchResult.Commit.
+	// main. staging is never deleted — it is a permanent branch reused by
+	// every release cycle. develop is not part of the release lifecycle
+	// (it's only a temporary integration branch for unit testing), so
+	// this does not touch it. It does not tag; internal/release creates
+	// the production tag itself, referencing the returned
+	// BranchResult.Commit.
 	ReleaseFinish(ctx context.Context) (BranchResult, error)
 
 	// ReleaseFixStart and ReleaseFixFinish manage a release-fix branch

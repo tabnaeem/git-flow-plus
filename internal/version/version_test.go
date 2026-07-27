@@ -53,6 +53,36 @@ func TestApplyBuildZeroChangeStillAdvancesQA(t *testing.T) {
 	}
 }
 
+func TestApplyFeatureIncrementsRelease(t *testing.T) {
+	v := version.New(5, 2)
+	v.ApplyFeature()
+	if v.Release != 3 {
+		t.Errorf("after ApplyFeature(): Release = %d, want 3", v.Release)
+	}
+	if got, want := v.String(), "5.3.0.0.1"; got != want {
+		t.Errorf("String() = %q, want %q", got, want)
+	}
+}
+
+func TestApplyFeatureMultipleCallsAccumulate(t *testing.T) {
+	v := version.New(5, 2)
+	v.ApplyFeature()
+	v.ApplyFeature()
+	v.ApplyFeature()
+	if v.Release != 5 {
+		t.Errorf("after three ApplyFeature() calls: Release = %d, want 5", v.Release)
+	}
+}
+
+func TestApplyFeatureDoesNotTouchOtherFields(t *testing.T) {
+	v := version.New(5, 2)
+	v.ApplyBuild(4, 1)
+	v.ApplyFeature()
+	if v.Fixes != 4 || v.DevOps != 1 || v.QA != 2 {
+		t.Errorf("ApplyFeature() changed Fixes/DevOps/QA: Fixes=%d DevOps=%d QA=%d, want Fixes=4 DevOps=1 QA=2", v.Fixes, v.DevOps, v.QA)
+	}
+}
+
 func TestParseRoundTrip(t *testing.T) {
 	v, err := version.Parse("5.2.3.1.4")
 	if err != nil {

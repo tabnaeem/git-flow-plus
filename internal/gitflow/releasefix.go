@@ -37,10 +37,14 @@ func (s *service) ReleaseFixStart(ctx context.Context, name string) (BranchResul
 	}, nil
 }
 
-// ReleaseFixFinish merges a release-fix branch into staging and deletes it.
-// It does not touch version.json or the manifest's included counts —
-// internal/release records the merge as pending, and only a QA build
-// (`git flow release build`) folds pending merges into the version.
+// ReleaseFixFinish merges a release-fix branch into staging. The branch
+// is deliberately NOT deleted here — like feature branches, it stays
+// alive through the rest of the QA cycle so follow-up commits can land on
+// it if needed, and is only deleted in bulk by ReleaseFinish once the
+// release completes. It does not touch version.json or the manifest's
+// included counts — internal/release records the merge as pending, and
+// only a QA build (`git flow release build`) folds pending merges into
+// the version.
 func (s *service) ReleaseFixFinish(ctx context.Context, name string) (BranchResult, error) {
 	name, err := validateName(name)
 	if err != nil {
@@ -70,14 +74,11 @@ func (s *service) ReleaseFixFinish(ctx context.Context, name string) (BranchResu
 	if err := s.git.MergeNoFF(ctx, branch, message); err != nil {
 		return BranchResult{}, wrapf(err, "merging %q into %q", branch, staging)
 	}
-	if err := s.git.DeleteBranch(ctx, branch, false); err != nil {
-		return BranchResult{}, wrapf(err, "deleting branch %q", branch)
-	}
 
-	s.logger.Info("finished release-fix branch", "branch", branch)
+	s.logger.Info("merged release-fix branch into staging", "branch", branch)
 	return BranchResult{
 		Branch:  branch,
 		Base:    staging,
-		Message: fmt.Sprintf("Merged %q into %q and deleted it", branch, staging),
+		Message: fmt.Sprintf("Merged %q into %q (branch kept alive for the QA cycle)", branch, staging),
 	}, nil
 }

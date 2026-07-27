@@ -28,10 +28,10 @@ internal/cli                Cobra command tree — parses args, prints
         │        │
         │        ├── internal/feature   The Feature Registry: one permanent
         │        │                      record per feature ID, tracking its
-        │        │                      lifecycle (merged into develop ->
-        │        │                      unit tested -> approved -> shipped
-        │        │                      in a release), independent of any
-        │        │                      single release cycle.
+        │        │                      lifecycle (Created -> Approved ->
+        │        │                      IncludedInRelease -> Released),
+        │        │                      independent of any single release
+        │        │                      cycle.
         │        │
         │        └── internal/hooks     CI/CD-agnostic lifecycle hook
         │                                execution (post-qa-tag,
@@ -58,19 +58,28 @@ by one.
 method (`Checkout`, `MergeNoFF`, `Tag`, `TagCommit`, `CommitSHA`,
 `ConfigValue`, ...) maps to one `git` invocation and knows nothing about
 branch naming conventions. This is what lets `internal/gitflow` compose
-primitives into `feature start` = "create branch from develop" without
-`internal/git` needing to know what "develop" means. It also makes the
+primitives into `feature start` = "create branch from staging" without
+`internal/git` needing to know what "staging" means. It also makes the
 whole tool trivially compatible with any Git host or GUI — nothing here
 does anything a `git` command line wouldn't.
 
 **`internal/gitflow` is the branching model, not release management.** It
-implements `init`/`feature`/`hotfix`/`support` fully (branch, merge, tag,
-delete), and for release it implements only the shared git mechanics:
-`ReleaseFixStart/Finish` and `DevOpsStart/Finish` (branch from staging,
-merge into staging), and `ReleaseFinish` (merge staging → main → develop,
+implements `init`/`hotfix`/`support` fully (branch, merge, tag, delete);
+for `feature` it implements only `FeatureStart` (branch from staging) and
+`FeatureMerge` (merge into staging, deliberately without deleting the
+branch — see [ReleaseManagement.md](ReleaseManagement.md#the-branch-model))
+— there is no `FeatureFinish`, since a developer never merges their own
+feature branch, only a Release Manager does, via `internal/release`. For
+release it implements the shared git mechanics: `ReleaseFixStart/Finish`
+and `DevOpsStart/Finish` (branch from staging, merge into staging, also
+without deleting), and `ReleaseFinish` (merge staging → main —
+**not** into develop, which isn't part of the release lifecycle —
 returning the merge commit's SHA). It does **not** know about versions,
 manifests, or QA builds — ask it "what release is active" and it has no
-answer, because that's not its job.
+answer, because that's not its job. Bulk branch deletion (feature/
+release-fix/release-devops branches, once a release finishes) is owned by
+`internal/release`, not `internal/gitflow`, since deciding *which*
+branches are safe to delete requires knowing the release manifest.
 
 **`internal/release` is Git Flow Plus's actual value-add.** It owns the
 manifest schema, the version-bootstrap-and-tag sequence, and the rule that
@@ -147,24 +156,26 @@ committed like any other file:
 | File | Owner | Branch(es) | Purpose |
 |---|---|---|---|
 | `config.json` | `internal/config` | main, staging, develop | Branch names, prefixes, environment (development/testing/production), and logging defaults. |
-| `version.json` | `internal/version` | staging (while a release is active) | Current `{sprint, release, fixes, devops, qa}`. |
-| `release.json` | `internal/release` | staging (while a release is active) | The manifest: included/pending/deferred features, included/pending fixes and DevOps changes, build history. |
-| `features.json` | `internal/feature` | staging (permanent, never reset) | The Feature Registry: every feature ever merged into develop, and its lifecycle state. |
-| `archive/<release>.json` | `internal/release` | main, develop (post-finish) | Permanent snapshot of a finished release's manifest. |
+| `version.json` | `internal/version` | staging (while a release is active) | Current `{sprint, release, fixes, devops, qa}` — `release` is the live feature counter. |
+| `release.json` | `internal/release` | staging (while a release is active) | The manifest: included/pending/deferred features, included/pending fixes and DevOps changes, build history, feature-add audit trail. |
+| `features.json` | `internal/feature` | staging (permanent, never reset) | The Feature Registry: every feature branch ever started, and its lifecycle state. |
+| `archive/<release>.json` | `internal/release` | main (post-finish) | Permanent snapshot of a finished release's manifest. |
 | `hooks/<event>[.sh\|.ps1\|.bat\|.cmd]` | user-authored | wherever needed (typically staging) | Lifecycle hook scripts. |
 
 `version.json`/`release.json` only exist on staging *while a release is in
 progress* — `release finish` removes them (after archiving) so staging
 doesn't carry a stale "current release" between cycles. `features.json` is
 different: unlike the manifest, it's never removed or reset — a feature's
-lifecycle (registered, approved, shipped) has to survive across many
-release cycles, so it's committed to staging by every feature-planning
-operation (`git flow feature finish`, and every `release feature ...`
-subcommand) and flows forward into `main`/`develop` the same way
-`release.json` does, just without ever being deleted. `config.json` is
-seeded onto `main`/`staging`/`develop` at `init` time so it (and anything
-else placed in `.gitflowplus/`, like hook scripts) is available regardless
-of which branch a command runs from.
+lifecycle (registered, approved, included, shipped) has to survive across
+many release cycles, so it's committed to staging by every feature-planning
+operation (`git flow feature start`, and every `release feature ...`
+subcommand) and flows forward into `main` the same way `release.json`'s
+archive does, just without ever being deleted. Neither `features.json` nor
+the archive reach `develop` — `release finish` doesn't merge into it (see
+[ReleaseManagement.md](ReleaseManagement.md#the-branch-model)). `config.json`
+is seeded onto `main`/`staging`/`develop` at `init` time so it (and
+anything else placed in `.gitflowplus/`, like hook scripts) is available
+regardless of which branch a command runs from.
 
 ## What's read-only vs. what mutates
 

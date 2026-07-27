@@ -8,6 +8,46 @@ starting changelog rather than a single undifferentiated diff.
 
 ## Unreleased
 
+### Feature Management architecture correction (this milestone)
+
+`develop` is no longer part of the release lifecycle — it's a temporary
+integration branch for unit testing only. This is a breaking change to the
+feature workflow:
+
+- **`feature start` now branches from `staging`**, not `develop`.
+- **`feature finish` no longer exists.** A developer never merges their
+  own feature branch — they commit, push, and open a pull request. Only a
+  Release Manager decides if and when a feature ships, via `release
+  feature add`.
+- **`release feature add` now performs a real merge** of the feature
+  branch into staging (previously bookkeeping-only), and is **safe to
+  re-run**: a developer's QA follow-up commits, pushed to the
+  still-alive branch, are pulled in by re-running the same command,
+  without double-counting the feature in the version.
+- **Feature branches (and release-fix/release-devops branches) are no
+  longer deleted at merge time.** They stay alive through the whole QA
+  cycle so follow-up fixes have somewhere to land, and are only deleted
+  in bulk by `release finish`, once the release completes.
+- **`release finish` no longer merges into `develop`** — only into `main`.
+- **The Feature Registry gained an explicit state machine**
+  (`Created`/`InDevelopment`/`AwaitingReview`/`Approved`/
+  `IncludedInRelease`/`Released`/`Archived`), replacing the previous set
+  of independent boolean flags.
+- **`release feature remove` was removed** — once a merge is real, "un-
+  merging" isn't a safe, generally-correct operation, so the command was
+  dropped rather than given ill-defined semantics. `defer` still works,
+  but only before the first `add`.
+- **The version's 2nd field (`Release`) is now a live feature counter**,
+  incrementing by one on every *new* feature merged in via `release
+  feature add` (re-syncs don't increment it again) — independent of the
+  release's own stable name (e.g. `"5.2"`), which is unaffected.
+- `release.json` gained a `featureHistory` audit trail recording every
+  `add` action, including resyncs.
+
+See
+[ReleaseManagement.md](ReleaseManagement.md#feature-management--release-planning)
+for the full model.
+
 ### Production readiness (this milestone)
 
 - **Logging**: seven-level structured logging (Trace, Debug, Info,

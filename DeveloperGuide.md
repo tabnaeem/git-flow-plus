@@ -101,8 +101,10 @@ or `internal/release` instead.
 
 1. Decide which layer owns the logic:
    - Pure git branch mechanics (branch/merge/tag against a fixed base) →
-     `internal/gitflow`, following the `FeatureStart`/`FeatureFinish`
-     pattern in `internal/gitflow/feature.go`.
+     `internal/gitflow`, following the `FeatureStart`/`FeatureMerge`
+     pattern in `internal/gitflow/feature.go` (note: `FeatureMerge`, not
+     `FeatureFinish` — there is no feature-finish operation; a developer
+     never merges their own feature branch).
    - Anything involving the manifest, version, or tagging → `internal/release`.
 2. Add the method to the relevant `Service` interface and implement it.
    Write both a fake-based error-path test and a real-repo test (see
@@ -120,9 +122,15 @@ or `internal/release` instead.
 
 ## Extending the version scheme or manifest schema
 
-Both live entirely in `internal/version` (`Version` struct, `ApplyBuild`)
-and `internal/release` (`Manifest` struct in `manifest.go`). If you add a
-field to `Manifest`, update:
+Both live entirely in `internal/version` (`Version` struct, `ApplyBuild`,
+`ApplyFeature`) and `internal/release` (`Manifest` struct in
+`manifest.go`). Note that `Version.Release` is *not* the release's
+identifier — that's `Manifest.Release` (a string, e.g. `"5.2"`, fixed for
+the life of the cycle). `Version.Release` is a live int counter,
+incremented by `ApplyFeature` every time a feature merges in; the two
+fields share a name for historical reasons but track genuinely different
+things — don't conflate them when reading or extending this code. If you
+add a field to `Manifest`, update:
 
 - `manifest.go`'s `New()` constructor (so a fresh release starts with a
   sane default, typically an empty slice — never `nil` vs `[]string{}`
@@ -137,27 +145,48 @@ field to `Manifest`, update:
 The registry itself (`internal/feature`) follows the same shape as
 `internal/version`: add a field to `Feature` in `feature.go`, and it just
 round-trips through `Loader.Load`/`Save` — no other changes needed there.
+`Feature.State` is an ordered `feature.State` enum (`Created` →
+`InDevelopment` → `AwaitingReview` → `Approved` → `IncludedInRelease` →
+`Released` → `Archived`); `State.AtLeast(other)` is how every gate/filter
+compares them (`Registry.Approved()`, `pendingFeatureIDs`,
+`AddFeatureToRelease`'s guards) — never compare `State` with `==` against
+anything but an exact expected value, since "has this feature progressed
+at least this far" is almost always the actual question being asked.
 
 Release Planning logic lives in `internal/release/featureplanning.go`.
-Two things to preserve if you touch it:
+Things to preserve if you touch it:
 
 - **`Pending` is always derived, never stored.** Every mutation that
-  changes `Features.Included`/`Features.Deferred` (or approves a new
-  feature) recomputes `Features.Pending` via `pendingFeatureIDs` before
-  saving — never append/remove from `Pending` directly, or it will drift
-  out of sync with the registry.
+  changes `Features.Included`/`Features.Deferred` recomputes
+  `Features.Pending` via `pendingFeatureIDs` before saving — never
+  append/remove from `Pending` directly, or it will drift out of sync with
+  the registry.
 - **Mutating feature-planning methods check out `staging` first** (like
   `StartRelease`/`Build`/`ReleaseFixFinish`), because the registry's
-  canonical home is `staging` even though a feature's code is merged into
-  `develop` first — see
+  canonical home is `staging` — see
   [Architecture.md](Architecture.md#data-files) for why. `ListApprovedFeatures`/
   `FeatureStatus` are the read-only exception, matching `Status`/
   `Manifest`/`Version`'s "read whatever's on the current branch" behavior.
+- **`AddFeatureToRelease` performs a real merge**, via
+  `GitFlow.FeatureMerge` — unlike the rest of `internal/release`, which
+  never touches feature code directly. It's also **idempotent by design**
+  for a feature already `StateIncludedInRelease` in the active cycle (the
+  `resync` local variable): re-running it merges again without
+  incrementing `version.Version.Release` a second time. If you add a new
+  feature-planning method that also merges, follow this same pattern
+  rather than assuming a merge only ever happens once per feature — the
+  whole point of keeping the branch alive is that it doesn't.
+- **`AddFeatureToRelease` is the only place `version.ApplyFeature` gets
+  called.** If you extend the version scheme further (see below), keep
+  that invariant: exactly one call site per kind of mutator, matching how
+  `ApplyBuild` is only ever called from `Build`.
 
-Add both a fake-based error-path test (`fakeFeatureLoader` in
-`fake_test.go`, override `deps.FeatureLoader` after `happyDeps()`) and a
-real-repo test in `service_test.go` for any new feature-planning method —
-see `TestFeaturePlanningLifecycleRealRepo` for the pattern.
+Add both a fake-based error-path test (`fakeFeatureLoader`/`fakeGitFlow`
+in `fake_test.go`, override `deps.FeatureLoader`/`gf.featureMerge` after
+`happyDeps()`) and a real-repo test in `service_test.go` for any new
+feature-planning method — see `TestFeaturePlanningLifecycleRealRepo` and
+`TestAddFeatureToReleaseResyncPullsInFollowUpCommitsWithoutDoubleCountingVersion`
+for the pattern.
 
 ## Logging & Configuration
 

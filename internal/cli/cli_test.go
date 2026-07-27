@@ -144,43 +144,43 @@ func TestFeatureLifecycleViaCLI(t *testing.T) {
 	if !bytes.Contains(out.Bytes(), []byte("feature/widgets")) {
 		t.Errorf("feature start output = %q, want it to mention the branch name", out.String())
 	}
+	if !bytes.Contains(out.Bytes(), []byte(`Registered feature "widgets"`)) {
+		t.Errorf("feature start output = %q, want it to mention registering the feature", out.String())
+	}
 
-	if err := run(t, app, "feature", "finish", "widgets"); err != nil {
-		t.Fatalf("run(feature finish) error = %v", err)
+	// There is no `feature finish` — only a Release Manager, via `release
+	// feature add`, decides if and when a feature joins a release. The
+	// branch stays right where `feature start` left it.
+	current, err := app.GitClient().CurrentBranch(context.Background())
+	if err != nil {
+		t.Fatalf("CurrentBranch() error = %v", err)
+	}
+	if current != "feature/widgets" {
+		t.Errorf("CurrentBranch() = %q, want %q (feature start leaves the developer on their branch)", current, "feature/widgets")
 	}
 }
 
-func TestFeatureFinishRegistersFeatureInRegistry(t *testing.T) {
-	app, out, _ := testApp(t)
-	mustRun(t, app, "init")
-
-	mustRun(t, app, "feature", "start", "LOGIN")
-	writeFileAndCommit(t, app.RepoPath, "login.go", "package login", "Implement LOGIN")
-	out.Reset()
-
-	if err := run(t, app, "feature", "finish", "LOGIN"); err != nil {
-		t.Fatalf("run(feature finish) error = %v", err)
-	}
-	if !bytes.Contains(out.Bytes(), []byte(`Registered feature "LOGIN"`)) {
-		t.Errorf("feature finish output = %q, want it to mention registering LOGIN", out.String())
-	}
-
-	out.Reset()
-	if err := run(t, app, "release", "feature", "status"); err != nil {
-		t.Fatalf("run(release feature status) error = %v", err)
-	}
-	if !bytes.Contains(out.Bytes(), []byte("Approved:")) {
-		t.Errorf("release feature status output = %q, want an Approved: line", out.String())
-	}
-}
-
-func TestFeatureFinishUnknownBranchErrors(t *testing.T) {
+func TestFeatureStartBranchesFromStagingNotDevelop(t *testing.T) {
 	app, _, _ := testApp(t)
 	mustRun(t, app, "init")
+	ctx := context.Background()
 
-	err := run(t, app, "feature", "finish", "never-started")
-	if err == nil {
-		t.Fatal("run(feature finish) on an unknown branch = nil error, want failure")
+	cfg, err := app.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if err := app.GitClient().Checkout(ctx, cfg.Branches.Develop); err != nil {
+		t.Fatalf("Checkout(develop) error = %v", err)
+	}
+	writeFileAndCommit(t, app.RepoPath, "develop-only.txt", "x", "develop-only change")
+	if err := app.GitClient().Checkout(ctx, cfg.Branches.Staging); err != nil {
+		t.Fatalf("Checkout(staging) error = %v", err)
+	}
+
+	mustRun(t, app, "feature", "start", "LOGIN")
+
+	if _, err := os.Stat(filepath.Join(app.RepoPath, "develop-only.txt")); !os.IsNotExist(err) {
+		t.Error("feature/LOGIN contains develop-only.txt, want it branched from staging (not develop)")
 	}
 }
 
@@ -383,7 +383,6 @@ func TestReleaseFeaturePlanningLifecycleViaCLI(t *testing.T) {
 
 	mustRun(t, app, "feature", "start", "LOGIN")
 	writeFileAndCommit(t, app.RepoPath, "login.go", "package login", "Implement LOGIN")
-	mustRun(t, app, "feature", "finish", "LOGIN")
 
 	mustRun(t, app, "release", "start", "5.3")
 
@@ -412,8 +411,17 @@ func TestReleaseFeaturePlanningLifecycleViaCLI(t *testing.T) {
 	if err := run(t, app, "release", "feature", "add", "LOGIN"); err != nil {
 		t.Fatalf("run(release feature add) error = %v", err)
 	}
-	if !bytes.Contains(out.Bytes(), []byte(`Added feature "LOGIN"`)) {
-		t.Errorf("release feature add output = %q, want confirmation", out.String())
+	if !bytes.Contains(out.Bytes(), []byte(`Merged feature "LOGIN" into staging`)) {
+		t.Errorf("release feature add output = %q, want confirmation mentioning the merge", out.String())
+	}
+
+	// The feature branch must survive the merge — it stays alive through
+	// the QA cycle.
+	if exists, err := app.GitClient().BranchExists(context.Background(), "feature/LOGIN"); err != nil || !exists {
+		t.Errorf("BranchExists(feature/LOGIN) after release feature add = %v, %v, want true, nil", exists, err)
+	}
+	if !fileExists(app.RepoPath, "login.go") {
+		t.Error("login.go missing from staging after release feature add")
 	}
 
 	out.Reset()
@@ -434,19 +442,29 @@ func TestReleaseFeaturePlanningLifecycleViaCLI(t *testing.T) {
 		t.Errorf("release status output = %q, want it to mention the included feature LOGIN", out.String())
 	}
 
+	// The version's feature counter must have advanced.
 	out.Reset()
-	if err := run(t, app, "release", "feature", "remove", "LOGIN"); err != nil {
-		t.Fatalf("run(release feature remove) error = %v", err)
+	if err := run(t, app, "release", "version"); err != nil {
+		t.Fatalf("run(release version) error = %v", err)
 	}
-	if !bytes.Contains(out.Bytes(), []byte(`Removed feature "LOGIN"`)) {
-		t.Errorf("release feature remove output = %q, want confirmation", out.String())
+	if out.String() != "5.4.0.0.1\n" {
+		t.Errorf("release version after release feature add = %q, want %q (feature counter incremented from 3 to 4)", out.String(), "5.4.0.0.1\n")
 	}
+}
 
+func TestReleaseFeatureDeferViaCLI(t *testing.T) {
+	app, out, _ := testApp(t)
+	mustRun(t, app, "init")
+
+	mustRun(t, app, "feature", "start", "REPORTS")
+	mustRun(t, app, "release", "start", "5.3")
+	mustRun(t, app, "release", "feature", "approve", "REPORTS")
 	out.Reset()
-	if err := run(t, app, "release", "feature", "defer", "LOGIN"); err != nil {
+
+	if err := run(t, app, "release", "feature", "defer", "REPORTS"); err != nil {
 		t.Fatalf("run(release feature defer) error = %v", err)
 	}
-	if !bytes.Contains(out.Bytes(), []byte(`Deferred feature "LOGIN"`)) {
+	if !bytes.Contains(out.Bytes(), []byte(`Deferred feature "REPORTS"`)) {
 		t.Errorf("release feature defer output = %q, want confirmation", out.String())
 	}
 }
@@ -514,6 +532,11 @@ func TestReleaseFinishRequiresBuildFirstViaCLI(t *testing.T) {
 	if err := run(t, app, "release", "finish", "5.2"); err == nil {
 		t.Fatal("run(release finish) with pending unbuild changes = nil error, want failure")
 	}
+}
+
+func fileExists(repoPath, name string) bool {
+	_, err := os.Stat(filepath.Join(repoPath, name))
+	return err == nil
 }
 
 func writeFileAndCommit(t *testing.T, repoPath, name, contents, message string) {
@@ -702,9 +725,9 @@ func TestCLIErrorsUseBracketedErrorFormat(t *testing.T) {
 	app, _, _ := testApp(t)
 	mustRun(t, app, "init")
 
-	err := run(t, app, "feature", "finish", "never-started")
+	err := run(t, app, "hotfix", "finish", "never-started")
 	if err == nil {
-		t.Fatal("run(feature finish) on an unknown branch = nil error, want failure")
+		t.Fatal("run(hotfix finish) on an unknown branch = nil error, want failure")
 	}
 
 	// cli.Execute (not exercised directly by run() here) is what actually
@@ -735,7 +758,7 @@ func TestExecuteFormatsErrorsWithBracketedTag(t *testing.T) {
 		Runner:       git.NewExecRunner(),
 	}
 	root := cli.NewRootCmd(app)
-	root.SetArgs([]string{"feature", "finish", "never-started"})
+	root.SetArgs([]string{"hotfix", "finish", "never-started"})
 	root.SetOut(&out)
 	root.SetErr(&errOut)
 

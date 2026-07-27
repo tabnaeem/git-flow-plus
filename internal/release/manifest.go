@@ -37,14 +37,27 @@ type FeatureSet struct {
 // Manifest is the persisted record of a single release cycle on the
 // staging branch.
 type Manifest struct {
-	Release        string        `json:"release"`
-	Branch         string        `json:"branch"`
-	CurrentVersion string        `json:"currentVersion"`
-	CurrentQABuild int           `json:"currentQABuild"`
-	Features       FeatureSet    `json:"features"`
-	ReleaseFixes   ChangeSet     `json:"releaseFixes"`
-	DevOps         ChangeSet     `json:"devops"`
-	History        []BuildRecord `json:"history"`
+	Release        string         `json:"release"`
+	Branch         string         `json:"branch"`
+	CurrentVersion string         `json:"currentVersion"`
+	CurrentQABuild int            `json:"currentQABuild"`
+	Features       FeatureSet     `json:"features"`
+	ReleaseFixes   ChangeSet      `json:"releaseFixes"`
+	DevOps         ChangeSet      `json:"devops"`
+	History        []BuildRecord  `json:"history"`
+	FeatureHistory []FeatureEvent `json:"featureHistory"`
+}
+
+// FeatureEvent is a permanent audit-trail entry recording one `git flow
+// release feature add` action: which feature was merged into staging,
+// at which commit, and what the version became as a result (Release, the
+// feature counter, advances by one — see internal/version.ApplyFeature).
+type FeatureEvent struct {
+	ID          string    `json:"id"`
+	Branch      string    `json:"branch"`
+	MergeCommit string    `json:"mergeCommit"`
+	Version     string    `json:"version"`
+	AddedAt     time.Time `json:"addedAt"`
 }
 
 // BuildRecord is one entry in a release's QA build history: a permanent,
@@ -84,5 +97,6 @@ func New(release, branch, version string) *Manifest {
 				IncludedDevOps:       []string{},
 			},
 		},
+		FeatureHistory: []FeatureEvent{},
 	}
 }

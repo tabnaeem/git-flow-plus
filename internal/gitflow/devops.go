@@ -37,10 +37,13 @@ func (s *service) DevOpsStart(ctx context.Context, name string) (BranchResult, e
 	}, nil
 }
 
-// DevOpsFinish merges a release-devops branch into staging and deletes it.
-// It does not touch version.json or the manifest's included counts —
-// internal/release records the merge as pending, and only a QA build
-// (`git flow release build`) folds pending merges into the version.
+// DevOpsFinish merges a release-devops branch into staging. The branch is
+// deliberately NOT deleted here — like feature branches, it stays alive
+// through the rest of the QA cycle and is only deleted in bulk by
+// ReleaseFinish once the release completes. It does not touch
+// version.json or the manifest's included counts — internal/release
+// records the merge as pending, and only a QA build (`git flow release
+// build`) folds pending merges into the version.
 func (s *service) DevOpsFinish(ctx context.Context, name string) (BranchResult, error) {
 	name, err := validateName(name)
 	if err != nil {
@@ -70,14 +73,11 @@ func (s *service) DevOpsFinish(ctx context.Context, name string) (BranchResult, 
 	if err := s.git.MergeNoFF(ctx, branch, message); err != nil {
 		return BranchResult{}, wrapf(err, "merging %q into %q", branch, staging)
 	}
-	if err := s.git.DeleteBranch(ctx, branch, false); err != nil {
-		return BranchResult{}, wrapf(err, "deleting branch %q", branch)
-	}
 
-	s.logger.Info("finished release-devops branch", "branch", branch)
+	s.logger.Info("merged release-devops branch into staging", "branch", branch)
 	return BranchResult{
 		Branch:  branch,
 		Base:    staging,
-		Message: fmt.Sprintf("Merged %q into %q and deleted it", branch, staging),
+		Message: fmt.Sprintf("Merged %q into %q (branch kept alive for the QA cycle)", branch, staging),
 	}, nil
 }

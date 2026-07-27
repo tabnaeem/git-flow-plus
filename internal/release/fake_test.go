@@ -143,6 +143,7 @@ type fakeGitFlow struct {
 	releaseFinish     func() (gitflow.BranchResult, error)
 	releaseFixFinish  func(name string) (gitflow.BranchResult, error)
 	devOpsFinish      func(name string) (gitflow.BranchResult, error)
+	featureMerge      func(name string) (gitflow.BranchResult, error)
 }
 
 func (f *fakeGitFlow) EnsureInitialized(context.Context) error {
@@ -159,8 +160,11 @@ func (f *fakeGitFlow) Init(context.Context) (gitflow.InitResult, error) {
 func (f *fakeGitFlow) FeatureStart(context.Context, string) (gitflow.BranchResult, error) {
 	return gitflow.BranchResult{}, nil
 }
-func (f *fakeGitFlow) FeatureFinish(context.Context, string) (gitflow.BranchResult, error) {
-	return gitflow.BranchResult{}, nil
+func (f *fakeGitFlow) FeatureMerge(_ context.Context, name string) (gitflow.BranchResult, error) {
+	if f.featureMerge != nil {
+		return f.featureMerge(name)
+	}
+	return gitflow.BranchResult{Branch: "feature/" + name, Base: "staging"}, nil
 }
 func (f *fakeGitFlow) HotfixStart(context.Context, string) (gitflow.BranchResult, error) {
 	return gitflow.BranchResult{}, nil

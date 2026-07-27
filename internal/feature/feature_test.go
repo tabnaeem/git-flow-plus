@@ -23,7 +23,7 @@ func TestFindMissingReturnsFalse(t *testing.T) {
 
 func TestUpsertInsertsNew(t *testing.T) {
 	r := feature.New()
-	r.Upsert(feature.Feature{ID: "LOGIN", Branch: "feature/LOGIN"})
+	r.Upsert(feature.Feature{ID: "LOGIN", Branch: "feature/LOGIN", State: feature.StateCreated})
 
 	got, ok := r.Find("LOGIN")
 	if !ok {
@@ -36,23 +36,23 @@ func TestUpsertInsertsNew(t *testing.T) {
 
 func TestUpsertReplacesExisting(t *testing.T) {
 	r := feature.New()
-	r.Upsert(feature.Feature{ID: "LOGIN", Approved: false})
-	r.Upsert(feature.Feature{ID: "LOGIN", Approved: true})
+	r.Upsert(feature.Feature{ID: "LOGIN", State: feature.StateCreated})
+	r.Upsert(feature.Feature{ID: "LOGIN", State: feature.StateApproved})
 
 	if len(r.Features) != 1 {
 		t.Fatalf("len(Features) = %d, want 1 (Upsert should replace, not duplicate)", len(r.Features))
 	}
 	got, _ := r.Find("LOGIN")
-	if !got.Approved {
-		t.Error("Approved = false, want true (Upsert should have replaced the entry)")
+	if got.State != feature.StateApproved {
+		t.Errorf("State = %q, want %q (Upsert should have replaced the entry)", got.State, feature.StateApproved)
 	}
 }
 
 func TestApprovedFiltersCorrectly(t *testing.T) {
 	r := feature.New()
-	r.Upsert(feature.Feature{ID: "LOGIN", Approved: true})
-	r.Upsert(feature.Feature{ID: "PROFILE", Approved: false})
-	r.Upsert(feature.Feature{ID: "PAYMENT", Approved: true})
+	r.Upsert(feature.Feature{ID: "LOGIN", State: feature.StateApproved})
+	r.Upsert(feature.Feature{ID: "PROFILE", State: feature.StateCreated})
+	r.Upsert(feature.Feature{ID: "PAYMENT", State: feature.StateIncludedInRelease})
 
 	approved := r.Approved()
 	if len(approved) != 2 {
@@ -66,6 +66,27 @@ func TestApprovedFiltersCorrectly(t *testing.T) {
 		t.Errorf("Approved() = %v, want LOGIN and PAYMENT", approved)
 	}
 	if ids["PROFILE"] {
-		t.Error("Approved() included PROFILE, which is not approved")
+		t.Error("Approved() included PROFILE, which hasn't reached StateApproved")
+	}
+}
+
+func TestStateAtLeast(t *testing.T) {
+	cases := []struct {
+		state, other feature.State
+		want         bool
+	}{
+		{feature.StateCreated, feature.StateCreated, true},
+		{feature.StateApproved, feature.StateCreated, true},
+		{feature.StateCreated, feature.StateApproved, false},
+		{feature.StateIncludedInRelease, feature.StateApproved, true},
+		{feature.StateApproved, feature.StateIncludedInRelease, false},
+		{feature.StateArchived, feature.StateReleased, true},
+		{"", feature.StateCreated, true}, // empty ranks as StateCreated (rank 0)
+		{"", feature.StateApproved, false},
+	}
+	for _, c := range cases {
+		if got := c.state.AtLeast(c.other); got != c.want {
+			t.Errorf("State(%q).AtLeast(%q) = %v, want %v", c.state, c.other, got, c.want)
+		}
 	}
 }

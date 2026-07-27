@@ -186,7 +186,7 @@ func finishHappyFake(branchName string) *fakeClient {
 	}
 }
 
-func TestFeatureFinishPropagatesErrors(t *testing.T) {
+func TestFeatureMergePropagatesErrors(t *testing.T) {
 	cases := []struct {
 		name    string
 		mutate  func(f *fakeClient)
@@ -195,18 +195,27 @@ func TestFeatureFinishPropagatesErrors(t *testing.T) {
 		{"StatusError", func(f *fakeClient) { f.status = func() (gitpkg.Status, error) { return gitpkg.Status{}, errBoom } }, "boom"},
 		{"CheckoutError", func(f *fakeClient) { f.checkout = func(string) error { return errBoom } }, "checking out"},
 		{"MergeError", func(f *fakeClient) { f.mergeNoFF = func(string, string) error { return errBoom } }, "merging"},
-		{"DeleteError", func(f *fakeClient) { f.deleteBranch = func(string, bool) error { return errBoom } }, "deleting branch"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := finishHappyFake("feature/x")
 			tc.mutate(f)
-			_, err := newFakeService(f).FeatureFinish(context.Background(), "x")
+			_, err := newFakeService(f).FeatureMerge(context.Background(), "x")
 			if !containsMsg(err, tc.wantMsg) {
-				t.Errorf("FeatureFinish() error = %v, want it to contain %q", err, tc.wantMsg)
+				t.Errorf("FeatureMerge() error = %v, want it to contain %q", err, tc.wantMsg)
 			}
 		})
+	}
+}
+
+func TestFeatureMergeMissingBranchErrors(t *testing.T) {
+	f := &fakeClient{branchExists: func(name string) (bool, error) {
+		return name == "main" || name == "staging" || name == "develop", nil
+	}}
+	_, err := newFakeService(f).FeatureMerge(context.Background(), "never-started")
+	if !errors.Is(err, gitflow.ErrBranchMissing) {
+		t.Errorf("FeatureMerge() error = %v, want ErrBranchMissing", err)
 	}
 }
 
@@ -265,14 +274,6 @@ func TestReleaseFinishPropagatesErrors(t *testing.T) {
 		}, "checking out"},
 		{"MergeMainError", func(f *fakeClient) { f.mergeNoFF = func(string, string) error { return errBoom } }, "merging"},
 		{"CommitSHAError", func(f *fakeClient) { f.commitSHA = func() (string, error) { return "", errBoom } }, "resolving commit"},
-		{"CheckoutDevelopError", func(f *fakeClient) {
-			f.checkout = func(name string) error {
-				if name == "develop" {
-					return errBoom
-				}
-				return nil
-			}
-		}, "checking out"},
 	}
 
 	for _, tc := range cases {
@@ -364,15 +365,6 @@ func TestReleaseFixDevOpsFinishPropagateErrors(t *testing.T) {
 			_, err := c.call(newFakeService(f))
 			if !containsMsg(err, "merging") {
 				t.Errorf("%s error = %v, want 'merging'", c.name, err)
-			}
-		})
-
-		t.Run(c.name+"/DeleteError", func(t *testing.T) {
-			f := finishHappyFake(c.branchName)
-			f.deleteBranch = func(string, bool) error { return errBoom }
-			_, err := c.call(newFakeService(f))
-			if !containsMsg(err, "deleting branch") {
-				t.Errorf("%s error = %v, want 'deleting branch'", c.name, err)
 			}
 		})
 	}

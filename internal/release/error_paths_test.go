@@ -547,43 +547,43 @@ func TestVersionErrorsWhenMissing(t *testing.T) {
 	}
 }
 
-// --- RegisterFeatureMerged ---
+// --- RegisterFeatureCreated ---
 
-func TestRegisterFeatureMergedPropagatesCheckoutError(t *testing.T) {
+func TestRegisterFeatureCreatedPropagatesCheckoutError(t *testing.T) {
 	deps, git, _, _, _ := happyDeps()
 	git.checkout = func(string) error { return errBoom }
 
-	err := release.NewService(deps).RegisterFeatureMerged(context.Background(), "LOGIN", "feature/LOGIN", "abc123")
+	err := release.NewService(deps).RegisterFeatureCreated(context.Background(), "LOGIN", "feature/LOGIN")
 	if !contains(err, "checking out") {
-		t.Errorf("RegisterFeatureMerged() error = %v, want 'checking out'", err)
+		t.Errorf("RegisterFeatureCreated() error = %v, want 'checking out'", err)
 	}
 }
 
-func TestRegisterFeatureMergedCreatesNewEntry(t *testing.T) {
+func TestRegisterFeatureCreatedCreatesNewEntry(t *testing.T) {
 	deps, _, _, _, _ := happyDeps()
 	fl := &fakeFeatureLoader{}
 	var saved *feature.Registry
 	fl.save = func(r *feature.Registry) error { saved = r; return nil }
 	deps.FeatureLoader = fl
 
-	if err := release.NewService(deps).RegisterFeatureMerged(context.Background(), "LOGIN", "feature/LOGIN", "abc123"); err != nil {
-		t.Fatalf("RegisterFeatureMerged() error = %v", err)
+	if err := release.NewService(deps).RegisterFeatureCreated(context.Background(), "LOGIN", "feature/LOGIN"); err != nil {
+		t.Fatalf("RegisterFeatureCreated() error = %v", err)
 	}
 	f, ok := saved.Find("LOGIN")
 	if !ok {
 		t.Fatal("registry saved without LOGIN entry")
 	}
-	if !f.MergedIntoDevelop || f.Branch != "feature/LOGIN" || f.MergeCommit != "abc123" {
-		t.Errorf("saved feature = %+v, want MergedIntoDevelop=true Branch=feature/LOGIN MergeCommit=abc123", f)
+	if f.State != feature.StateCreated || f.Branch != "feature/LOGIN" {
+		t.Errorf("saved feature = %+v, want State=Created Branch=feature/LOGIN", f)
 	}
 }
 
-func TestRegisterFeatureMergedPreservesExistingApproval(t *testing.T) {
+func TestRegisterFeatureCreatedPreservesExistingState(t *testing.T) {
 	deps, _, _, _, _ := happyDeps()
 	fl := &fakeFeatureLoader{
 		load: func() (*feature.Registry, error) {
 			r := feature.New()
-			r.Upsert(feature.Feature{ID: "LOGIN", Approved: true, UnitTested: true})
+			r.Upsert(feature.Feature{ID: "LOGIN", State: feature.StateApproved})
 			return r, nil
 		},
 	}
@@ -591,12 +591,25 @@ func TestRegisterFeatureMergedPreservesExistingApproval(t *testing.T) {
 	fl.save = func(r *feature.Registry) error { saved = r; return nil }
 	deps.FeatureLoader = fl
 
-	if err := release.NewService(deps).RegisterFeatureMerged(context.Background(), "LOGIN", "feature/LOGIN", "def456"); err != nil {
-		t.Fatalf("RegisterFeatureMerged() error = %v", err)
+	if err := release.NewService(deps).RegisterFeatureCreated(context.Background(), "LOGIN", "feature/LOGIN"); err != nil {
+		t.Fatalf("RegisterFeatureCreated() error = %v", err)
 	}
 	f, _ := saved.Find("LOGIN")
-	if !f.Approved {
-		t.Error("RegisterFeatureMerged() cleared Approved on re-registration, want it preserved")
+	if f.State != feature.StateApproved {
+		t.Errorf("State = %q, want it preserved as Approved on re-registration", f.State)
+	}
+}
+
+func TestRegisterFeatureCreatedChecksOutBackToFeatureBranch(t *testing.T) {
+	deps, git, _, _, _ := happyDeps()
+	var checkouts []string
+	git.checkout = func(name string) error { checkouts = append(checkouts, name); return nil }
+
+	if err := release.NewService(deps).RegisterFeatureCreated(context.Background(), "LOGIN", "feature/LOGIN"); err != nil {
+		t.Fatalf("RegisterFeatureCreated() error = %v", err)
+	}
+	if len(checkouts) == 0 || checkouts[len(checkouts)-1] != "feature/LOGIN" {
+		t.Errorf("checkout sequence = %v, want the last checkout to be feature/LOGIN (leave the developer on their branch)", checkouts)
 	}
 }
 
@@ -612,28 +625,12 @@ func TestApproveFeatureNotFoundErrors(t *testing.T) {
 	}
 }
 
-func TestApproveFeatureNotMergedErrors(t *testing.T) {
-	deps, _, _, _, _ := happyDeps()
-	deps.FeatureLoader = &fakeFeatureLoader{
-		load: func() (*feature.Registry, error) {
-			r := feature.New()
-			r.Upsert(feature.Feature{ID: "LOGIN", MergedIntoDevelop: false})
-			return r, nil
-		},
-	}
-
-	err := release.NewService(deps).ApproveFeature(context.Background(), "LOGIN")
-	if !errors.Is(err, release.ErrFeatureNotMergedIntoDevelop) {
-		t.Errorf("ApproveFeature() error = %v, want ErrFeatureNotMergedIntoDevelop", err)
-	}
-}
-
 func TestApproveFeatureAlreadyApprovedErrors(t *testing.T) {
 	deps, _, _, _, _ := happyDeps()
 	deps.FeatureLoader = &fakeFeatureLoader{
 		load: func() (*feature.Registry, error) {
 			r := feature.New()
-			r.Upsert(feature.Feature{ID: "LOGIN", MergedIntoDevelop: true, Approved: true})
+			r.Upsert(feature.Feature{ID: "LOGIN", State: feature.StateApproved})
 			return r, nil
 		},
 	}
@@ -644,12 +641,12 @@ func TestApproveFeatureAlreadyApprovedErrors(t *testing.T) {
 	}
 }
 
-func TestApproveFeatureMarksApprovedAndUnitTested(t *testing.T) {
+func TestApproveFeatureMarksApproved(t *testing.T) {
 	deps, _, _, _, _ := happyDeps()
 	fl := &fakeFeatureLoader{
 		load: func() (*feature.Registry, error) {
 			r := feature.New()
-			r.Upsert(feature.Feature{ID: "LOGIN", MergedIntoDevelop: true})
+			r.Upsert(feature.Feature{ID: "LOGIN", State: feature.StateCreated})
 			return r, nil
 		},
 	}
@@ -661,8 +658,8 @@ func TestApproveFeatureMarksApprovedAndUnitTested(t *testing.T) {
 		t.Fatalf("ApproveFeature() error = %v", err)
 	}
 	f, _ := saved.Find("LOGIN")
-	if !f.Approved || !f.UnitTested {
-		t.Errorf("saved feature = %+v, want Approved=true UnitTested=true", f)
+	if f.State != feature.StateApproved {
+		t.Errorf("State = %q, want Approved", f.State)
 	}
 }
 
@@ -678,12 +675,22 @@ func TestAddFeatureToReleaseNoActiveReleaseErrors(t *testing.T) {
 	}
 }
 
+func TestAddFeatureToReleaseNotFoundErrors(t *testing.T) {
+	deps, _, _, _, _ := happyDeps()
+	deps.FeatureLoader = &fakeFeatureLoader{}
+
+	err := release.NewService(deps).AddFeatureToRelease(context.Background(), "LOGIN")
+	if !errors.Is(err, release.ErrFeatureNotFound) {
+		t.Errorf("AddFeatureToRelease() error = %v, want ErrFeatureNotFound", err)
+	}
+}
+
 func TestAddFeatureToReleaseNotApprovedErrors(t *testing.T) {
 	deps, _, _, _, _ := happyDeps()
 	deps.FeatureLoader = &fakeFeatureLoader{
 		load: func() (*feature.Registry, error) {
 			r := feature.New()
-			r.Upsert(feature.Feature{ID: "LOGIN", Approved: false})
+			r.Upsert(feature.Feature{ID: "LOGIN", State: feature.StateCreated})
 			return r, nil
 		},
 	}
@@ -694,12 +701,12 @@ func TestAddFeatureToReleaseNotApprovedErrors(t *testing.T) {
 	}
 }
 
-func TestAddFeatureToReleaseAlreadyShippedErrors(t *testing.T) {
+func TestAddFeatureToReleaseAlreadyAssignedErrors(t *testing.T) {
 	deps, _, _, _, _ := happyDeps()
 	deps.FeatureLoader = &fakeFeatureLoader{
 		load: func() (*feature.Registry, error) {
 			r := feature.New()
-			r.Upsert(feature.Feature{ID: "LOGIN", Approved: true, IncludedInRelease: true, Release: "5.1"})
+			r.Upsert(feature.Feature{ID: "LOGIN", State: feature.StateReleased, Release: "5.1"})
 			return r, nil
 		},
 	}
@@ -710,71 +717,127 @@ func TestAddFeatureToReleaseAlreadyShippedErrors(t *testing.T) {
 	}
 }
 
-func TestAddFeatureToReleaseMovesFromDeferredToIncluded(t *testing.T) {
-	deps, _, _, ml, _ := happyDeps()
-	deps.FeatureLoader = &fakeFeatureLoader{
+func TestAddFeatureToReleaseMergesAndUpdatesEverything(t *testing.T) {
+	deps, git, gf, ml, vl := happyDeps()
+	var savedRegistry *feature.Registry
+	fl := &fakeFeatureLoader{
 		load: func() (*feature.Registry, error) {
 			r := feature.New()
-			r.Upsert(feature.Feature{ID: "LOGIN", Approved: true})
+			r.Upsert(feature.Feature{ID: "LOGIN", Branch: "feature/LOGIN", State: feature.StateApproved})
 			return r, nil
 		},
+		save: func(r *feature.Registry) error { savedRegistry = r; return nil },
 	}
-	ml.load = func() (*release.Manifest, error) {
-		m := release.New("5.2", "staging", "5.2.0.0.1")
-		m.Features.Deferred = []string{"LOGIN"}
-		return m, nil
+	deps.FeatureLoader = fl
+
+	var mergedName string
+	gf.featureMerge = func(name string) (gitflow.BranchResult, error) {
+		mergedName = name
+		return gitflow.BranchResult{Branch: "feature/" + name, Base: "staging"}, nil
 	}
-	var saved *release.Manifest
-	ml.save = func(m *release.Manifest) error { saved = m; return nil }
+	git.commitSHA = func() (string, error) { return "mergecommit123", nil }
+
+	var savedManifest *release.Manifest
+	ml.load = func() (*release.Manifest, error) { return release.New("5.2", "staging", "5.2.0.0.1"), nil }
+	ml.save = func(m *release.Manifest) error { savedManifest = m; return nil }
+
+	var savedVersion *version.Version
+	vl.load = func() (*version.Version, error) { return version.New(5, 2), nil }
+	vl.save = func(v *version.Version) error { savedVersion = v; return nil }
 
 	if err := release.NewService(deps).AddFeatureToRelease(context.Background(), "LOGIN"); err != nil {
 		t.Fatalf("AddFeatureToRelease() error = %v", err)
 	}
-	if len(saved.Features.Included) != 1 || saved.Features.Included[0] != "LOGIN" {
-		t.Errorf("Features.Included = %v, want [\"LOGIN\"]", saved.Features.Included)
+
+	if mergedName != "LOGIN" {
+		t.Errorf("GitFlow.FeatureMerge called with %q, want %q", mergedName, "LOGIN")
 	}
-	if len(saved.Features.Deferred) != 0 {
-		t.Errorf("Features.Deferred = %v, want empty", saved.Features.Deferred)
+	if savedVersion.Release != 3 {
+		t.Errorf("saved version Release = %d, want 3 (feature counter incremented from 2)", savedVersion.Release)
+	}
+	if len(savedManifest.Features.Included) != 1 || savedManifest.Features.Included[0] != "LOGIN" {
+		t.Errorf("Features.Included = %v, want [\"LOGIN\"]", savedManifest.Features.Included)
+	}
+	if len(savedManifest.FeatureHistory) != 1 || savedManifest.FeatureHistory[0].ID != "LOGIN" ||
+		savedManifest.FeatureHistory[0].MergeCommit != "mergecommit123" {
+		t.Errorf("FeatureHistory = %+v, want one entry for LOGIN with MergeCommit=mergecommit123", savedManifest.FeatureHistory)
+	}
+	f, _ := savedRegistry.Find("LOGIN")
+	if f.State != feature.StateIncludedInRelease || f.MergeCommit != "mergecommit123" {
+		t.Errorf("saved feature = %+v, want State=IncludedInRelease MergeCommit=mergecommit123", f)
 	}
 }
 
-// --- RemoveFeatureFromRelease ---
+func TestAddFeatureToReleaseResyncPullsInFollowUpCommitsWithoutDoubleCountingVersion(t *testing.T) {
+	// A feature already merged this cycle (StateIncludedInRelease) must
+	// still be re-addable — this is how a developer's QA follow-up
+	// commits, pushed to the still-alive branch, actually reach staging:
+	// Git Flow Plus never syncs them automatically.
+	deps, git, gf, ml, vl := happyDeps()
+	var savedRegistry *feature.Registry
+	fl := &fakeFeatureLoader{
+		load: func() (*feature.Registry, error) {
+			r := feature.New()
+			r.Upsert(feature.Feature{ID: "LOGIN", Branch: "feature/LOGIN", State: feature.StateIncludedInRelease, MergeCommit: "old"})
+			return r, nil
+		},
+		save: func(r *feature.Registry) error { savedRegistry = r; return nil },
+	}
+	deps.FeatureLoader = fl
 
-func TestRemoveFeatureFromReleaseNotAssignedErrors(t *testing.T) {
-	deps, _, _, ml, _ := happyDeps()
-	ml.load = func() (*release.Manifest, error) { return release.New("5.2", "staging", "5.2.0.0.1"), nil }
+	gf.featureMerge = func(name string) (gitflow.BranchResult, error) {
+		return gitflow.BranchResult{Branch: "feature/" + name, Base: "staging"}, nil
+	}
+	git.commitSHA = func() (string, error) { return "newcommit456", nil }
 
-	err := release.NewService(deps).RemoveFeatureFromRelease(context.Background(), "LOGIN")
-	if !errors.Is(err, release.ErrFeatureNotAssignedToCurrentRelease) {
-		t.Errorf("RemoveFeatureFromRelease() error = %v, want ErrFeatureNotAssignedToCurrentRelease", err)
+	var savedManifest *release.Manifest
+	ml.load = func() (*release.Manifest, error) {
+		m := release.New("5.2", "staging", "5.2.1.0.1")
+		m.Features.Included = []string{"LOGIN"}
+		m.CurrentVersion = "5.2.1.0.1"
+		return m, nil
+	}
+	ml.save = func(m *release.Manifest) error { savedManifest = m; return nil }
+
+	versionSaved := false
+	vl.save = func(*version.Version) error { versionSaved = true; return nil }
+
+	if err := release.NewService(deps).AddFeatureToRelease(context.Background(), "LOGIN"); err != nil {
+		t.Fatalf("AddFeatureToRelease() resync error = %v", err)
+	}
+
+	if versionSaved {
+		t.Error("AddFeatureToRelease() re-saved the version on a resync, want the feature counter untouched the second time")
+	}
+	if len(savedManifest.Features.Included) != 1 || savedManifest.Features.Included[0] != "LOGIN" {
+		t.Errorf("Features.Included = %v, want [\"LOGIN\"] (still exactly one entry)", savedManifest.Features.Included)
+	}
+	if savedManifest.CurrentVersion != "5.2.1.0.1" {
+		t.Errorf("CurrentVersion = %q, want unchanged %q", savedManifest.CurrentVersion, "5.2.1.0.1")
+	}
+	if len(savedManifest.FeatureHistory) != 1 || savedManifest.FeatureHistory[0].MergeCommit != "newcommit456" {
+		t.Errorf("FeatureHistory = %+v, want one new entry recording the resync merge commit", savedManifest.FeatureHistory)
+	}
+	f, _ := savedRegistry.Find("LOGIN")
+	if f.MergeCommit != "newcommit456" {
+		t.Errorf("MergeCommit = %q, want it updated to the resync's commit", f.MergeCommit)
 	}
 }
 
-func TestRemoveFeatureFromReleaseReturnsToPending(t *testing.T) {
-	deps, _, _, ml, _ := happyDeps()
+func TestAddFeatureToReleasePropagatesMergeError(t *testing.T) {
+	deps, _, gf, _, _ := happyDeps()
 	deps.FeatureLoader = &fakeFeatureLoader{
 		load: func() (*feature.Registry, error) {
 			r := feature.New()
-			r.Upsert(feature.Feature{ID: "LOGIN", Approved: true})
+			r.Upsert(feature.Feature{ID: "LOGIN", State: feature.StateApproved})
 			return r, nil
 		},
 	}
-	ml.load = func() (*release.Manifest, error) {
-		m := release.New("5.2", "staging", "5.2.0.0.1")
-		m.Features.Included = []string{"LOGIN"}
-		return m, nil
-	}
-	var saved *release.Manifest
-	ml.save = func(m *release.Manifest) error { saved = m; return nil }
+	gf.featureMerge = func(string) (gitflow.BranchResult, error) { return gitflow.BranchResult{}, errBoom }
 
-	if err := release.NewService(deps).RemoveFeatureFromRelease(context.Background(), "LOGIN"); err != nil {
-		t.Fatalf("RemoveFeatureFromRelease() error = %v", err)
-	}
-	if len(saved.Features.Included) != 0 {
-		t.Errorf("Features.Included = %v, want empty", saved.Features.Included)
-	}
-	if len(saved.Features.Pending) != 1 || saved.Features.Pending[0] != "LOGIN" {
-		t.Errorf("Features.Pending = %v, want [\"LOGIN\"] (derived from approved-minus-included-minus-deferred)", saved.Features.Pending)
+	err := release.NewService(deps).AddFeatureToRelease(context.Background(), "LOGIN")
+	if !errors.Is(err, errBoom) {
+		t.Errorf("AddFeatureToRelease() error = %v, want it to wrap errBoom", err)
 	}
 }
 
@@ -795,7 +858,7 @@ func TestDeferFeatureNotApprovedErrors(t *testing.T) {
 	deps.FeatureLoader = &fakeFeatureLoader{
 		load: func() (*feature.Registry, error) {
 			r := feature.New()
-			r.Upsert(feature.Feature{ID: "LOGIN", Approved: false})
+			r.Upsert(feature.Feature{ID: "LOGIN", State: feature.StateCreated})
 			return r, nil
 		},
 	}
@@ -806,20 +869,32 @@ func TestDeferFeatureNotApprovedErrors(t *testing.T) {
 	}
 }
 
-func TestDeferFeatureMovesFromIncludedToDeferred(t *testing.T) {
+func TestDeferFeatureAlreadyAssignedErrors(t *testing.T) {
+	deps, _, _, _, _ := happyDeps()
+	deps.FeatureLoader = &fakeFeatureLoader{
+		load: func() (*feature.Registry, error) {
+			r := feature.New()
+			r.Upsert(feature.Feature{ID: "LOGIN", State: feature.StateIncludedInRelease})
+			return r, nil
+		},
+	}
+
+	err := release.NewService(deps).DeferFeature(context.Background(), "LOGIN")
+	if !errors.Is(err, release.ErrFeatureAlreadyAssigned) {
+		t.Errorf("DeferFeature() error = %v, want ErrFeatureAlreadyAssigned", err)
+	}
+}
+
+func TestDeferFeatureAddsToDeferredList(t *testing.T) {
 	deps, _, _, ml, _ := happyDeps()
 	deps.FeatureLoader = &fakeFeatureLoader{
 		load: func() (*feature.Registry, error) {
 			r := feature.New()
-			r.Upsert(feature.Feature{ID: "REPORTS", Approved: true})
+			r.Upsert(feature.Feature{ID: "REPORTS", State: feature.StateApproved})
 			return r, nil
 		},
 	}
-	ml.load = func() (*release.Manifest, error) {
-		m := release.New("5.2", "staging", "5.2.0.0.1")
-		m.Features.Included = []string{"REPORTS"}
-		return m, nil
-	}
+	ml.load = func() (*release.Manifest, error) { return release.New("5.2", "staging", "5.2.0.0.1"), nil }
 	var saved *release.Manifest
 	ml.save = func(m *release.Manifest) error { saved = m; return nil }
 
@@ -828,9 +903,6 @@ func TestDeferFeatureMovesFromIncludedToDeferred(t *testing.T) {
 	}
 	if len(saved.Features.Deferred) != 1 || saved.Features.Deferred[0] != "REPORTS" {
 		t.Errorf("Features.Deferred = %v, want [\"REPORTS\"]", saved.Features.Deferred)
-	}
-	if len(saved.Features.Included) != 0 {
-		t.Errorf("Features.Included = %v, want empty", saved.Features.Included)
 	}
 }
 
@@ -841,8 +913,8 @@ func TestListApprovedFeaturesFiltersUnapproved(t *testing.T) {
 	deps.FeatureLoader = &fakeFeatureLoader{
 		load: func() (*feature.Registry, error) {
 			r := feature.New()
-			r.Upsert(feature.Feature{ID: "LOGIN", Approved: true})
-			r.Upsert(feature.Feature{ID: "DASHBOARD", Approved: false})
+			r.Upsert(feature.Feature{ID: "LOGIN", State: feature.StateApproved})
+			r.Upsert(feature.Feature{ID: "DASHBOARD", State: feature.StateCreated})
 			return r, nil
 		},
 	}
@@ -862,7 +934,7 @@ func TestFeatureStatusNoActiveReleaseReportsAllPending(t *testing.T) {
 	deps.FeatureLoader = &fakeFeatureLoader{
 		load: func() (*feature.Registry, error) {
 			r := feature.New()
-			r.Upsert(feature.Feature{ID: "LOGIN", Approved: true})
+			r.Upsert(feature.Feature{ID: "LOGIN", State: feature.StateApproved})
 			return r, nil
 		},
 	}
@@ -884,9 +956,9 @@ func TestFeatureStatusReflectsManifestAssignments(t *testing.T) {
 	deps.FeatureLoader = &fakeFeatureLoader{
 		load: func() (*feature.Registry, error) {
 			r := feature.New()
-			r.Upsert(feature.Feature{ID: "LOGIN", Approved: true})
-			r.Upsert(feature.Feature{ID: "PROFILE", Approved: true})
-			r.Upsert(feature.Feature{ID: "REPORTS", Approved: true})
+			r.Upsert(feature.Feature{ID: "LOGIN", State: feature.StateIncludedInRelease})
+			r.Upsert(feature.Feature{ID: "PROFILE", State: feature.StateApproved})
+			r.Upsert(feature.Feature{ID: "REPORTS", State: feature.StateApproved})
 			return r, nil
 		},
 	}

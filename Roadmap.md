@@ -6,19 +6,27 @@ when.
 
 ## Implemented
 
-- Standard Git Flow: `init`, `feature`, `hotfix`, `support`.
+- Standard Git Flow: `init`, `hotfix`, `support`, and `feature start`
+  (there is no `feature finish` — see below).
 - Three permanent branches: `main` (production), `staging` (the release
-  line), `develop` (feature development + unit testing only).
+  line — the release lifecycle, and feature branches, begin here),
+  `develop` (a temporary integration branch for unit testing, outside the
+  release lifecycle entirely).
 - Release management: `release start`/`build`/`finish`/`status`/`version`/
-  `manifest`, `releasefix`, `devops` — merging never moves the version,
-  only `release build` does.
+  `manifest`, `releasefix`, `devops` — merging a release-fix/DevOps
+  branch never moves the version, only `release build` does; the branch
+  stays alive until `release finish`.
 - Mandatory annotated tagging for every QA build and every production
   release, with structured, self-describing tag messages.
 - CI/CD-agnostic lifecycle hooks (`post-qa-tag`, `post-production-tag`).
 - **Feature Management & Release Planning**: a permanent Feature Registry
-  (`internal/feature`, `.gitflowplus/features.json`), `feature finish`
-  auto-registration, and `release feature {list,add,remove,approve,defer,status}`
-  for explicit, PM-driven release composition. See
+  (`internal/feature`, `.gitflowplus/features.json`) with an explicit
+  lifecycle (`Created`/`Approved`/`IncludedInRelease`/`Released`/...),
+  `feature start` auto-registration, and `release feature
+  {list,add,approve,defer,status}` — `add` performs a **real merge** of
+  the feature branch into staging (not bookkeeping), is safely re-runnable
+  to pull in QA follow-up commits, and only `release finish` deletes the
+  branch. See
   [ReleaseManagement.md](ReleaseManagement.md#feature-management--release-planning).
 - `doctor` health checks, `config` inspection.
 - Full unit + real end-to-end test coverage (every package that touches
@@ -48,13 +56,16 @@ These aren't oversights — each was a conscious call to keep Git Flow Plus
 a thin, predictable layer over Git rather than a service with its own
 consistency model or a black box that moves code on your behalf.
 
-- **No automated feature-code promotion onto staging.** Release Planning
-  (`release feature add`/`defer`) is bookkeeping only. Git Flow Plus never
-  cherry-picks or auto-merges a feature branch into `staging`; the code
-  has to already be reachable there by whatever process your team uses.
-  Automating this safely (conflict handling, partial-merge recovery)
-  is a meaningfully different and riskier feature than anything else in
-  the tool today.
+- **No way to un-merge a feature.** There is deliberately no `release
+  feature remove` — once `add` has performed its real merge, reverting it
+  safely and generally isn't something Git Flow Plus attempts. `defer`
+  covers the "hold this back" case, but only before the first `add`.
+- **No automatic detection of follow-up commits.** A developer can push a
+  QA-fix commit to an already-merged feature branch at any time; Git Flow
+  Plus doesn't watch for it or pull it in automatically. The Release
+  Manager has to notice (via their normal QA process) and re-run `release
+  feature add` — see
+  [ReleaseManagement.md](ReleaseManagement.md#what-release-planning-does-now).
 - **One release at a time.** `release start` rejects a second concurrent
   release outright (`ErrReleaseAlreadyActive`) rather than trying to
   disambiguate which release a command targets.
@@ -75,10 +86,11 @@ Roughly in the order they'd likely be tackled, none currently scheduled:
    `.rpm`, and an MSI, so installing is a one-line command rather than
    downloading and extracting an archive (see
    [InstallationGuide.md](InstallationGuide.md#future-packaging-not-yet-available)).
-3. **Optional feature-promotion helper**: a strictly opt-in command (e.g.
-   `release feature promote <id>`) that performs a supervised merge of a
-   feature branch into `staging` — kept separate from the planning
-   commands above so the default workflow stays merge-free.
+3. **Follow-up-commit notification**: some way to surface "this
+   already-merged feature branch has new commits" (e.g. as part of
+   `release feature status` or `doctor`) so a Release Manager doesn't have
+   to rely purely on their own QA process to know a re-run of `release
+   feature add` is needed.
 4. **Code signing**: the release archives are unsigned, so macOS
    Gatekeeper and Windows SmartScreen may warn on first run (see
    [InstallationGuide.md](InstallationGuide.md)) — signing/notarization

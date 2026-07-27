@@ -451,22 +451,36 @@ func TestFinishReleaseArchivesTagsAndResetsForNextCycle(t *testing.T) {
 		t.Errorf("TagExists(%s) [QA tag] = %v, %v, want true, nil", buildResult.Tag, qaTagExists, err)
 	}
 
-	for _, branch := range []string{cfg.Branches.Main, cfg.Branches.Develop} {
-		if err := gitClient.Checkout(ctx, branch); err != nil {
-			t.Fatalf("Checkout(%s) error = %v", branch, err)
-		}
-		if fileExists(dir, ".gitflowplus/release.json") {
-			t.Errorf("release.json still present on %s after finish; it should be archived and removed", branch)
-		}
-		if fileExists(dir, ".gitflowplus/version.json") {
-			t.Errorf("version.json still present on %s after finish", branch)
-		}
-		if !fileExists(dir, ".gitflowplus/archive/5.2.json") {
-			t.Errorf("archive/5.2.json missing on %s after finish", branch)
-		}
-		if !fileExists(dir, "bugfix.txt") {
-			t.Errorf("bugfix.txt missing from %s after finish", branch)
-		}
+	// The release-fix branch stayed alive through the QA cycle; only now,
+	// once the release has finished, should it be deleted.
+	fixExists, err := gitClient.BranchExists(ctx, "release-fix/BUG-101")
+	if err != nil || fixExists {
+		t.Errorf("BranchExists(release-fix/BUG-101) after release finish = %v, %v, want false, nil", fixExists, err)
+	}
+
+	if err := gitClient.Checkout(ctx, cfg.Branches.Main); err != nil {
+		t.Fatalf("Checkout(%s) error = %v", cfg.Branches.Main, err)
+	}
+	if fileExists(dir, ".gitflowplus/release.json") {
+		t.Error("release.json still present on main after finish; it should be archived and removed")
+	}
+	if fileExists(dir, ".gitflowplus/version.json") {
+		t.Error("version.json still present on main after finish")
+	}
+	if !fileExists(dir, ".gitflowplus/archive/5.2.json") {
+		t.Error("archive/5.2.json missing on main after finish")
+	}
+	if !fileExists(dir, "bugfix.txt") {
+		t.Error("bugfix.txt missing from main after finish")
+	}
+
+	// develop is not part of the release lifecycle — ReleaseFinish must
+	// not touch it at all.
+	if err := gitClient.Checkout(ctx, cfg.Branches.Develop); err != nil {
+		t.Fatalf("Checkout(%s) error = %v", cfg.Branches.Develop, err)
+	}
+	if fileExists(dir, "bugfix.txt") {
+		t.Error("bugfix.txt present on develop after finish, want develop untouched")
 	}
 
 	// staging is permanent and must still exist, ready for the next release.
@@ -494,37 +508,32 @@ func TestFinishReleaseArchivesTagsAndResetsForNextCycle(t *testing.T) {
 // --- Feature Registry / Release Planning ---
 
 func TestFeaturePlanningLifecycleRealRepo(t *testing.T) {
-	dir, gitClient, svc, gitflowSvc, cfg := newInitializedRepo(t)
+	dir, gitClient, svc, gitflowSvc, _ := newInitializedRepo(t)
 	ctx := context.Background()
 
-	// Develop a feature, merge it into develop (a pure gitflow op — the
-	// registry update is CLI-layer orchestration in this codebase, so the
-	// test drives RegisterFeatureMerged directly, as cli/feature.go does).
-	if _, err := gitflowSvc.FeatureStart(ctx, "LOGIN"); err != nil {
+	// Start a feature (branches from staging, not develop) and register
+	// it — the registry update is CLI-layer orchestration in the real
+	// tool (cli/feature.go), so the test drives RegisterFeatureCreated
+	// directly, mirroring that.
+	startResult, err := gitflowSvc.FeatureStart(ctx, "LOGIN")
+	if err != nil {
 		t.Fatalf("FeatureStart() error = %v", err)
 	}
-	writeAndCommit(t, dir, gitClient, "login.go", "package login", "Implement LOGIN")
-	branchResult, err := gitflowSvc.FeatureFinish(ctx, "LOGIN")
-	if err != nil {
-		t.Fatalf("FeatureFinish() error = %v", err)
-	}
-	mergeCommit, err := gitClient.CommitSHA(ctx)
-	if err != nil {
-		t.Fatalf("CommitSHA() error = %v", err)
-	}
-	if err := svc.RegisterFeatureMerged(ctx, "LOGIN", branchResult.Branch, mergeCommit); err != nil {
-		t.Fatalf("RegisterFeatureMerged() error = %v", err)
+	if err := svc.RegisterFeatureCreated(ctx, "LOGIN", startResult.Branch); err != nil {
+		t.Fatalf("RegisterFeatureCreated() error = %v", err)
 	}
 
-	// The registry lives on staging; RegisterFeatureMerged must have left
-	// us there.
+	// RegisterFeatureCreated must leave the developer on their feature
+	// branch, not staging.
 	current, err := gitClient.CurrentBranch(ctx)
 	if err != nil {
 		t.Fatalf("CurrentBranch() error = %v", err)
 	}
-	if current != cfg.Branches.Staging {
-		t.Errorf("CurrentBranch() after RegisterFeatureMerged = %q, want %q", current, cfg.Branches.Staging)
+	if current != "feature/LOGIN" {
+		t.Errorf("CurrentBranch() after RegisterFeatureCreated = %q, want %q", current, "feature/LOGIN")
 	}
+
+	writeAndCommit(t, dir, gitClient, "login.go", "package login", "Implement LOGIN")
 
 	// Not approved yet: Release Planning can't touch it.
 	if _, err := svc.StartRelease(ctx, "5.3"); err != nil {
@@ -547,8 +556,31 @@ func TestFeaturePlanningLifecycleRealRepo(t *testing.T) {
 		t.Errorf("FeatureStatus().Pending = %v, want [\"LOGIN\"] before any planning decision", statusBeforeDecision.Pending)
 	}
 
+	versionBefore, err := svc.Version(ctx)
+	if err != nil {
+		t.Fatalf("Version() error = %v", err)
+	}
+
 	if err := svc.AddFeatureToRelease(ctx, "LOGIN"); err != nil {
 		t.Fatalf("AddFeatureToRelease() error = %v", err)
+	}
+
+	// AddFeatureToRelease performs the real merge into staging.
+	if !fileExists(dir, "login.go") {
+		t.Error("login.go missing from staging after AddFeatureToRelease")
+	}
+	versionAfter, err := svc.Version(ctx)
+	if err != nil {
+		t.Fatalf("Version() error = %v", err)
+	}
+	if versionAfter.Release != versionBefore.Release+1 {
+		t.Errorf("Version().Release = %d, want %d (the feature counter, incremented by AddFeatureToRelease)", versionAfter.Release, versionBefore.Release+1)
+	}
+
+	// The feature branch must still exist — it stays alive through QA.
+	exists, err := gitClient.BranchExists(ctx, "feature/LOGIN")
+	if err != nil || !exists {
+		t.Errorf("BranchExists(feature/LOGIN) after AddFeatureToRelease = %v, %v, want true, nil", exists, err)
 	}
 
 	m, err := svc.Manifest(ctx)
@@ -561,9 +593,12 @@ func TestFeaturePlanningLifecycleRealRepo(t *testing.T) {
 	if len(m.Features.Pending) != 0 {
 		t.Errorf("Manifest().Features.Pending = %v, want empty once LOGIN is included", m.Features.Pending)
 	}
+	if len(m.FeatureHistory) != 1 || m.FeatureHistory[0].ID != "LOGIN" {
+		t.Errorf("Manifest().FeatureHistory = %+v, want one entry for LOGIN", m.FeatureHistory)
+	}
 
 	// Finishing the release (no pending fixes/devops) must promote LOGIN to
-	// permanently shipped in the registry.
+	// permanently Released in the registry, and delete its branch.
 	finishResult, err := svc.FinishRelease(ctx, "5.3")
 	if err != nil {
 		t.Fatalf("FinishRelease() error = %v", err)
@@ -576,8 +611,13 @@ func TestFeaturePlanningLifecycleRealRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListApprovedFeatures() error = %v", err)
 	}
-	if len(features) != 1 || !features[0].IncludedInRelease || features[0].Release != "5.3" {
-		t.Errorf("ListApprovedFeatures() = %+v, want LOGIN shipped in release 5.3", features)
+	if len(features) != 1 || features[0].State != feature.StateReleased || features[0].Release != "5.3" {
+		t.Errorf("ListApprovedFeatures() = %+v, want LOGIN Released in release 5.3", features)
+	}
+
+	exists, err = gitClient.BranchExists(ctx, "feature/LOGIN")
+	if err != nil || exists {
+		t.Errorf("BranchExists(feature/LOGIN) after release finish = %v, %v, want false, nil (deleted once the release completes)", exists, err)
 	}
 }
 
@@ -588,11 +628,8 @@ func TestDeferFeatureKeepsItOutOfNextReleaseUntilReAdded(t *testing.T) {
 	if _, err := gitflowSvc.FeatureStart(ctx, "REPORTS"); err != nil {
 		t.Fatalf("FeatureStart() error = %v", err)
 	}
-	if _, err := gitflowSvc.FeatureFinish(ctx, "REPORTS"); err != nil {
-		t.Fatalf("FeatureFinish() error = %v", err)
-	}
-	if err := svc.RegisterFeatureMerged(ctx, "REPORTS", "feature/REPORTS", "irrelevant"); err != nil {
-		t.Fatalf("RegisterFeatureMerged() error = %v", err)
+	if err := svc.RegisterFeatureCreated(ctx, "REPORTS", "feature/REPORTS"); err != nil {
+		t.Fatalf("RegisterFeatureCreated() error = %v", err)
 	}
 	if err := svc.ApproveFeature(ctx, "REPORTS"); err != nil {
 		t.Fatalf("ApproveFeature() error = %v", err)

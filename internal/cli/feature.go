@@ -15,7 +15,7 @@ func newFeatureCmd(app *App) *cobra.Command {
 	cmd.AddCommand(
 		&cobra.Command{
 			Use:   "start <name>",
-			Short: "Start a new feature branch from develop",
+			Short: "Start a new feature branch from staging and register it in the Feature Registry",
 			Args:  cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				cfg, err := app.LoadConfig()
@@ -27,35 +27,14 @@ func newFeatureCmd(app *App) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return app.Println(result.Message)
-			},
-		},
-		&cobra.Command{
-			Use:   "finish <name>",
-			Short: "Merge a feature branch into develop, delete it, and register the feature as merged in the Feature Registry",
-			Args:  cobra.ExactArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				cfg, err := app.LoadConfig()
-				if err != nil {
-					return err
-				}
-				svc := gitflow.NewService(app.GitClient(), cfg, app.Logger)
-				result, err := svc.FeatureFinish(cmd.Context(), args[0])
-				if err != nil {
-					return err
-				}
 				if err := app.Println(result.Message); err != nil {
 					return err
 				}
 
-				mergeCommit, err := app.GitClient().CommitSHA(cmd.Context())
-				if err != nil {
+				if err := app.ReleaseService(cfg).RegisterFeatureCreated(cmd.Context(), args[0], result.Branch); err != nil {
 					return err
 				}
-				if err := app.ReleaseService(cfg).RegisterFeatureMerged(cmd.Context(), args[0], result.Branch, mergeCommit); err != nil {
-					return err
-				}
-				return app.Printf("Registered feature %q as merged into develop\n", args[0])
+				return app.Printf("Registered feature %q\n", args[0])
 			},
 		},
 	)

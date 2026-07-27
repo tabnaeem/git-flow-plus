@@ -24,21 +24,14 @@ var (
 	// ErrFeatureNotFound indicates a feature-planning command referenced a
 	// feature ID that isn't in the Feature Registry.
 	ErrFeatureNotFound = errors.New("feature not found in the registry")
-	// ErrFeatureNotMergedIntoDevelop indicates ApproveFeature was called
-	// for a feature that hasn't been merged into develop yet.
-	ErrFeatureNotMergedIntoDevelop = errors.New("feature has not been merged into develop yet; run 'git flow feature finish' first")
-	// ErrFeatureAlreadyApproved indicates ApproveFeature was called for an
-	// already-approved feature.
+	// ErrFeatureAlreadyApproved indicates ApproveFeature was called for a
+	// feature that has already reached at least Approved.
 	ErrFeatureAlreadyApproved = errors.New("feature is already approved")
-	// ErrFeatureNotApproved indicates a feature-planning command requires
-	// approval that hasn't happened yet.
+	// ErrFeatureNotApproved indicates AddFeatureToRelease or DeferFeature
+	// was called for a feature that hasn't been approved yet.
 	ErrFeatureNotApproved = errors.New("feature is not approved")
 	// ErrFeatureAlreadyAssigned indicates AddFeatureToRelease or
-	// DeferFeature was called for a feature already assigned to (or
-	// shipped in) a release.
+	// DeferFeature was called for a feature already included in or
+	// shipped by a release.
 	ErrFeatureAlreadyAssigned = errors.New("feature is already assigned to a release")
-	// ErrFeatureNotAssignedToCurrentRelease indicates
-	// RemoveFeatureFromRelease was called for a feature not assigned to
-	// the currently active release.
-	ErrFeatureNotAssignedToCurrentRelease = errors.New("feature is not assigned to the active release")
 )

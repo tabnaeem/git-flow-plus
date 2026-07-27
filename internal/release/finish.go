@@ -15,9 +15,10 @@ import (
 // snapshot under .gitflowplus/archive/), removes the live release.json/
 // version.json so they don't linger as stale "current release" files
 // (resetting the counters for the next release cycle), merges staging into
-// main and main into develop, and tags the exact commit that merged into
-// main — the commit that carries exactly the code that passed QA — with a
-// message detailing what shipped.
+// main (develop is not part of the release lifecycle, so it's untouched),
+// and tags the exact commit that merged into main — the commit that
+// carries exactly the code that passed QA — with a message detailing what
+// shipped.
 //
 // The production tag is named after the release itself (e.g. "v5.2"), not
 // the full QA version string: that full-version tag (e.g. "v5.2.4.0.2")
@@ -26,9 +27,12 @@ import (
 // commit on main. "v5.2" marks the one production release of 5.2; its
 // message still records the exact version and commit that shipped.
 //
-// Unlike the old ephemeral release/<name> branch, staging is never
-// deleted. On success this triggers the "post-production-tag" lifecycle
-// hook.
+// Every feature that was included is marked StateReleased in the Feature
+// Registry, and — only now, once the release has truly completed — every
+// feature branch that was included, plus every remaining release-fix/*
+// and release-devops/* branch, is deleted (see cleanupReleaseBranches).
+// Unlike those, staging is never deleted. On success this triggers the
+// "post-production-tag" lifecycle hook.
 func (s *service) FinishRelease(ctx context.Context, name string) (FinishResult, error) {
 	if err := s.requireActiveRelease(ctx); err != nil {
 		return FinishResult{}, err
@@ -70,7 +74,7 @@ func (s *service) FinishRelease(ctx context.Context, name string) (FinishResult,
 			if !ok {
 				continue
 			}
-			f.IncludedInRelease = true
+			f.State = feature.StateReleased
 			f.Release = name
 			r.Upsert(f)
 		}
@@ -124,6 +128,8 @@ func (s *service) FinishRelease(ctx context.Context, name string) (FinishResult,
 		"GITFLOWPLUS_BRANCH":  s.deps.Config.Branches.Main,
 	})
 
+	s.cleanupReleaseBranches(ctx, m)
+
 	s.deps.Logger.Info("finished release", "release", name, "version", v.String(), "tag", tagName)
 	return FinishResult{
 		Release: name,
@@ -131,4 +137,45 @@ func (s *service) FinishRelease(ctx context.Context, name string) (FinishResult,
 		Tag:     tagName,
 		Version: v.String(),
 	}, nil
+}
+
+// cleanupReleaseBranches deletes every feature branch that was included in
+// this release, plus every remaining release-fix/* and release-devops/*
+// branch — the bulk cleanup step that only happens once a release
+// successfully completes, per the design that feature/release-fix/
+// release-devops branches all stay alive through the QA cycle so
+// follow-up commits can land on them if needed.
+//
+// This is deliberately best-effort: by the time it runs, the release is
+// already fully tagged and merged — an unmerged or already-deleted branch
+// is a leftover housekeeping issue, not a reason to fail a release that
+// has, in every way that matters, already succeeded. Failures are logged
+// as warnings, never returned as errors.
+func (s *service) cleanupReleaseBranches(ctx context.Context, m *Manifest) {
+	branches := make([]string, 0, len(m.Features.Included))
+	for _, id := range m.Features.Included {
+		branches = append(branches, s.deps.Config.Prefixes.Feature+id)
+	}
+
+	fixBranches, err := s.deps.Git.ListBranches(ctx, s.deps.Config.Prefixes.ReleaseFix+"*")
+	if err != nil {
+		s.deps.Logger.Warn("could not list release-fix branches for cleanup", "error", err)
+	} else {
+		branches = append(branches, fixBranches...)
+	}
+
+	devopsBranches, err := s.deps.Git.ListBranches(ctx, s.deps.Config.Prefixes.DevOps+"*")
+	if err != nil {
+		s.deps.Logger.Warn("could not list release-devops branches for cleanup", "error", err)
+	} else {
+		branches = append(branches, devopsBranches...)
+	}
+
+	for _, branch := range branches {
+		if err := s.deps.Git.DeleteBranch(ctx, branch, false); err != nil {
+			s.deps.Logger.Warn("could not delete branch after release finish", "branch", branch, "error", err)
+			continue
+		}
+		s.deps.Logger.Info("deleted branch after release finish", "branch", branch)
+	}
 }

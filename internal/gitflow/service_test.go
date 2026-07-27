@@ -164,7 +164,7 @@ func TestInitExistingHistoryMissingMainErrors(t *testing.T) {
 
 // --- Feature ---
 
-func TestFeatureStartAndFinishLifecycle(t *testing.T) {
+func TestFeatureStartAndMergeLifecycle(t *testing.T) {
 	dir, gitClient, svc, cfg := newInitializedRepo(t)
 	ctx := context.Background()
 
@@ -175,6 +175,9 @@ func TestFeatureStartAndFinishLifecycle(t *testing.T) {
 	if startResult.Branch != "feature/widgets" {
 		t.Errorf("Branch = %q, want %q", startResult.Branch, "feature/widgets")
 	}
+	if startResult.Base != cfg.Branches.Staging {
+		t.Errorf("Base = %q, want %q (features branch from staging, not develop)", startResult.Base, cfg.Branches.Staging)
+	}
 
 	current, _ := gitClient.CurrentBranch(ctx)
 	if current != "feature/widgets" {
@@ -183,25 +186,25 @@ func TestFeatureStartAndFinishLifecycle(t *testing.T) {
 
 	writeAndCommit(t, dir, gitClient, "widget.go", "package widget\n", "Add widget")
 
-	finishResult, err := svc.FeatureFinish(ctx, "widgets")
+	mergeResult, err := svc.FeatureMerge(ctx, "widgets")
 	if err != nil {
-		t.Fatalf("FeatureFinish() error = %v", err)
+		t.Fatalf("FeatureMerge() error = %v", err)
 	}
-	if finishResult.Base != cfg.Branches.Develop {
-		t.Errorf("Base = %q, want %q", finishResult.Base, cfg.Branches.Develop)
+	if mergeResult.Base != cfg.Branches.Staging {
+		t.Errorf("Base = %q, want %q", mergeResult.Base, cfg.Branches.Staging)
 	}
 
 	current, _ = gitClient.CurrentBranch(ctx)
-	if current != cfg.Branches.Develop {
-		t.Fatalf("CurrentBranch() after finish = %q, want %q", current, cfg.Branches.Develop)
+	if current != cfg.Branches.Staging {
+		t.Fatalf("CurrentBranch() after merge = %q, want %q", current, cfg.Branches.Staging)
 	}
 	if !fileExists(dir, "widget.go") {
-		t.Error("widget.go missing from develop after FeatureFinish")
+		t.Error("widget.go missing from staging after FeatureMerge")
 	}
 
 	exists, err := gitClient.BranchExists(ctx, "feature/widgets")
-	if err != nil || exists {
-		t.Errorf("BranchExists(feature/widgets) after finish = %v, %v, want false, nil", exists, err)
+	if err != nil || !exists {
+		t.Errorf("BranchExists(feature/widgets) after merge = %v, %v, want true, nil (branch must stay alive for the QA cycle)", exists, err)
 	}
 }
 
@@ -218,16 +221,16 @@ func TestFeatureStartDuplicateErrors(t *testing.T) {
 	}
 }
 
-func TestFeatureFinishMissingBranchErrors(t *testing.T) {
+func TestFeatureMergeMissingBranchErrorsRealRepo(t *testing.T) {
 	_, _, svc, _ := newInitializedRepo(t)
 
-	_, err := svc.FeatureFinish(context.Background(), "never-started")
+	_, err := svc.FeatureMerge(context.Background(), "never-started")
 	if !errors.Is(err, gitflow.ErrBranchMissing) {
-		t.Errorf("FeatureFinish() error = %v, want ErrBranchMissing", err)
+		t.Errorf("FeatureMerge() error = %v, want ErrBranchMissing", err)
 	}
 }
 
-func TestFeatureFinishDirtyWorkingTreeErrors(t *testing.T) {
+func TestFeatureMergeDirtyWorkingTreeErrors(t *testing.T) {
 	dir, _, svc, _ := newInitializedRepo(t)
 	ctx := context.Background()
 
@@ -238,9 +241,9 @@ func TestFeatureFinishDirtyWorkingTreeErrors(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	_, err := svc.FeatureFinish(ctx, "dirty")
+	_, err := svc.FeatureMerge(ctx, "dirty")
 	if !errors.Is(err, gitflow.ErrDirtyWorkingTree) {
-		t.Errorf("FeatureFinish() with uncommitted changes error = %v, want ErrDirtyWorkingTree", err)
+		t.Errorf("FeatureMerge() with uncommitted changes error = %v, want ErrDirtyWorkingTree", err)
 	}
 }
 
@@ -379,7 +382,8 @@ func TestSupportFinishMissingBranchErrors(t *testing.T) {
 	}
 }
 
-// --- Release (production release: staging -> main -> develop) ---
+// --- Release (production release: staging -> main only; develop is not
+// part of the release lifecycle) ---
 //
 // ReleaseFinish itself no longer tags (internal/release owns tagging, so
 // it can reference the exact merge commit with a manifest-derived
@@ -420,13 +424,13 @@ func TestReleaseFinishLifecycle(t *testing.T) {
 		t.Error("CHANGELOG.md missing from main after ReleaseFinish")
 	}
 
-	// develop must have merged main (not staging directly) — its second
-	// parent should be main's current commit.
+	// develop is not part of the release lifecycle — ReleaseFinish must
+	// not touch it at all.
 	if err := gitClient.Checkout(ctx, cfg.Branches.Develop); err != nil {
 		t.Fatalf("Checkout(develop) error = %v", err)
 	}
-	if !fileExists(dir, "CHANGELOG.md") {
-		t.Error("CHANGELOG.md missing from develop after ReleaseFinish")
+	if fileExists(dir, "CHANGELOG.md") {
+		t.Error("CHANGELOG.md present on develop after ReleaseFinish, want develop untouched")
 	}
 
 	// staging is permanent — it must still exist after finish.
@@ -489,8 +493,8 @@ func TestReleaseFixLifecycle(t *testing.T) {
 	}
 
 	exists, err := gitClient.BranchExists(ctx, "release-fix/BUG-101")
-	if err != nil || exists {
-		t.Errorf("BranchExists(release-fix/BUG-101) after finish = %v, %v, want false, nil", exists, err)
+	if err != nil || !exists {
+		t.Errorf("BranchExists(release-fix/BUG-101) after finish = %v, %v, want true, nil (branch stays alive until release finish)", exists, err)
 	}
 }
 
@@ -541,8 +545,8 @@ func TestDevOpsLifecycle(t *testing.T) {
 		t.Error("redis.yaml missing from staging after DevOpsFinish")
 	}
 	exists, err := gitClient.BranchExists(ctx, "release-devops/redis-cache")
-	if err != nil || exists {
-		t.Errorf("BranchExists(release-devops/redis-cache) after finish = %v, %v, want false, nil", exists, err)
+	if err != nil || !exists {
+		t.Errorf("BranchExists(release-devops/redis-cache) after finish = %v, %v, want true, nil (branch stays alive until release finish)", exists, err)
 	}
 }
 

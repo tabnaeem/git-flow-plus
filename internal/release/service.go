@@ -73,30 +73,32 @@ type Service interface {
 	// Version returns the active release's version.
 	Version(ctx context.Context) (*version.Version, error)
 
-	// RegisterFeatureMerged records (or updates) a feature in the Feature
-	// Registry as merged into develop, called by the CLI immediately after
-	// `git flow feature finish` succeeds. It does not require an active
-	// release — the registry persists across release cycles.
-	RegisterFeatureMerged(ctx context.Context, id, branch, mergeCommit string) error
-	// ApproveFeature marks a feature as approved (unit-tested and ready for
-	// Release Planning) after Unit Testing. Returns ErrFeatureNotFound if
-	// the feature isn't registered, ErrFeatureNotMergedIntoDevelop if it
-	// hasn't been merged into develop, and ErrFeatureAlreadyApproved if
-	// it's already approved.
+	// RegisterFeatureCreated records a newly started feature branch in the
+	// Feature Registry as StateCreated, called by the CLI immediately
+	// after `git flow feature start` succeeds. It does not require an
+	// active release — the registry persists across release cycles. There
+	// is no equivalent "registered as finished" call: a developer never
+	// merges their own feature branch, only a Release Manager does, via
+	// AddFeatureToRelease.
+	RegisterFeatureCreated(ctx context.Context, id, branch string) error
+	// ApproveFeature marks a feature as approved and ready for Release
+	// Planning. Returns ErrFeatureNotFound if the feature isn't
+	// registered, or ErrFeatureAlreadyApproved if it has already reached
+	// at least Approved.
 	ApproveFeature(ctx context.Context, id string) error
-	// AddFeatureToRelease is a Release Planning decision: it assigns an
-	// approved, unassigned feature to the active release on staging.
-	// Requires an active release (ErrNoActiveRelease) and an approved
-	// feature (ErrFeatureNotFound, ErrFeatureNotApproved,
-	// ErrFeatureAlreadyAssigned).
+	// AddFeatureToRelease is the Release Manager's Release Planning
+	// decision, and performs the real merge: validates the feature branch
+	// exists, merges it into staging (without deleting it — it stays
+	// alive through the QA cycle), advances the version's feature
+	// counter, updates the manifest, and marks the feature
+	// StateIncludedInRelease. Requires an active release
+	// (ErrNoActiveRelease) and an approved, unassigned feature
+	// (ErrFeatureNotFound, ErrFeatureNotApproved, ErrFeatureAlreadyAssigned).
 	AddFeatureToRelease(ctx context.Context, id string) error
-	// RemoveFeatureFromRelease undoes AddFeatureToRelease, returning the
-	// feature to Pending. Returns ErrFeatureNotAssignedToCurrentRelease if
-	// it isn't currently included in the active release.
-	RemoveFeatureFromRelease(ctx context.Context, id string) error
 	// DeferFeature marks an approved feature as held back for a future
 	// release. Requires an active release and an approved, unassigned
-	// feature (same error semantics as AddFeatureToRelease).
+	// feature (same error semantics as AddFeatureToRelease). Never
+	// touches Git — deferral is a planning decision made before any merge.
 	DeferFeature(ctx context.Context, id string) error
 	// ListApprovedFeatures lists every approved feature in the registry,
 	// regardless of release assignment.

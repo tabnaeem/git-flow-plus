@@ -37,20 +37,25 @@ git flow init
 
 ---
 
-## `git flow feature start <name>` / `finish <name>`
+## `git flow feature start <name>`
 
-Standard Git Flow. Branches `feature/<name>` from `develop`; finish merges
-back into `develop`, deletes the branch, then registers (or updates) the
-feature in the **Feature Registry** (`.gitflowplus/features.json`) as
-merged into develop — checking out `staging` to do so, since the registry
-is permanent and lives there (see
-[ReleaseManagement.md](ReleaseManagement.md#feature-management--release-planning)).
+Branches `feature/<name>` from **`staging`** (not `develop` — the release
+lifecycle begins on staging; see
+[ReleaseManagement.md](ReleaseManagement.md#the-branch-model)), then
+registers the feature in the **Feature Registry**
+(`.gitflowplus/features.json`) as `Created` — checking out `staging`
+briefly to do so (the registry lives there permanently), then back to the
+new feature branch.
+
+**There is no `feature finish`.** A developer never merges their own
+feature branch: commit, push, and open a pull request on whatever Git host
+you use. Only a Release Manager decides if and when a feature becomes part
+of a release — see `git flow release feature add` below.
 
 ```bash
 git flow feature start LOGIN
-git flow feature finish LOGIN
-# Merged "feature/LOGIN" into "develop" and deleted it
-# Registered feature "LOGIN" as merged into develop
+# Switched to a new branch "feature/LOGIN", based on "staging"
+# Registered feature "LOGIN"
 ```
 
 ---
@@ -105,7 +110,9 @@ git flow release start 5.2
 
 Branches `release-fix/<name>` from `staging`. **`finish` merges into
 staging and records the fix as pending — it does not touch the version.**
-Run `release build` to fold it in.
+Run `release build` to fold it in. The branch is **not** deleted by
+`finish` — like feature branches, it stays alive until `release finish`
+deletes it, so a follow-up fix can land on the same branch if needed.
 
 ```bash
 git flow releasefix start BUG-101
@@ -120,7 +127,8 @@ git flow releasefix finish BUG-101
 
 Same shape as `releasefix`, for infrastructure/pipeline changes:
 `release-devops/<name>`, branched from and merged into `staging`. Also
-only records the change as pending.
+only records the change as pending, and also leaves the branch alive
+until `release finish`.
 
 ```bash
 git flow devops start redis-cache
@@ -157,14 +165,19 @@ git flow release build
 The Production Release step. Fails with `ErrPendingChangesNotBuilt` if
 anything is still pending — run `release build` first.
 
-Marks every feature currently `included` in the release as permanently
-shipped in the Feature Registry (`includedInRelease: true`, `release:
-"<name>"`). Archives `release.json` to
+Marks every feature currently `included` in the release `Released` in the
+Feature Registry (`release: "<name>"`). Archives `release.json` to
 `.gitflowplus/archive/<name>.json`, removes the live `release.json`/
 `version.json` (resetting staging's counters for the next cycle), merges
-`staging` → `main` → `develop`, and tags the exact commit that merged into
-`main` as `v<name>` (not the full version string — see
-[ReleaseManagement.md](ReleaseManagement.md#tagging) for why). Triggers
+`staging` → `main` (`develop` is untouched — it's not part of the release
+lifecycle), and tags the exact commit that merged into `main` as `v<name>`
+(not the full version string — see
+[ReleaseManagement.md](ReleaseManagement.md#tagging) for why). **Only now**
+deletes every feature branch that was included in the release, every
+`release-fix/*` branch, and every `release-devops/*` branch — best-effort;
+a branch that somehow can't be deleted cleanly is logged as a warning, not
+a command failure (see
+[ReleaseManagement.md](ReleaseManagement.md#release-completion)). Triggers
 the `post-production-tag` lifecycle hook. `staging` is never deleted.
 
 ```bash
@@ -190,25 +203,24 @@ git flow release status
 
 ## `git flow release feature list`
 
-Lists every **approved** feature in the Feature Registry, regardless of
-release assignment, with its shipped-release status.
+Lists every feature in the Feature Registry that has reached at least
+`Approved`, regardless of release assignment, with its current state and
+shipped-release status.
 
 ```bash
 git flow release feature list
-# LOGIN            release=(none)   included=false
-# PROFILE          release=5.2      included=true
+# LOGIN            state=IncludedInRelease  release=(none)
+# PROFILE          state=Released           release=5.2
 ```
 
 ---
 
 ## `git flow release feature approve <id>`
 
-Marks a feature approved after Unit Testing — the gate that makes it
-eligible for Release Planning. Requires the feature to already be
-registered as merged into develop (`ErrFeatureNotMergedIntoDevelop`
-otherwise — run `feature finish` first). Fails with `ErrFeatureNotFound`
-if `id` isn't in the registry, or `ErrFeatureAlreadyApproved` if it's
-already approved.
+Marks a feature `Approved` — the gate that makes it eligible for Release
+Planning. Fails with `ErrFeatureNotFound` if `id` isn't in the registry
+(run `feature start` first), or `ErrFeatureAlreadyApproved` if it has
+already reached at least `Approved`.
 
 ```bash
 git flow release feature approve LOGIN
@@ -218,39 +230,41 @@ git flow release feature approve LOGIN
 
 ## `git flow release feature add <id>`
 
-The **Release Planning decision**: assigns an approved feature to the
-active release. Requires an active release on staging
-(`ErrNoActiveRelease`) and an approved, unshipped feature
-(`ErrFeatureNotApproved`, `ErrFeatureAlreadyAssigned`). Moves `id` out of
-`deferred` if it was there. Does not move any code — see
-[ReleaseManagement.md](ReleaseManagement.md#what-release-planning-does-and-doesnt-do).
+The **Release Planning decision, and a real merge**: validates
+`feature/<id>` exists, merges it into staging, advances the version's
+feature counter, and marks the feature `IncludedInRelease`. The branch is
+**not** deleted — it stays alive until `release finish`. Requires an
+active release on staging (`ErrNoActiveRelease`) and an approved feature
+(`ErrFeatureNotApproved`); fails with `ErrFeatureAlreadyAssigned` only for
+a feature that already shipped in a *finished* release.
+
+**Safe to re-run** for a feature already `IncludedInRelease` in the active
+cycle — this is how a developer's QA follow-up commits, pushed to the
+still-alive branch, actually reach staging. A repeat call merges again
+(a no-op if there's nothing new) without incrementing the feature counter
+a second time. See
+[ReleaseManagement.md](ReleaseManagement.md#what-release-planning-does-now).
 
 ```bash
 git flow release feature add LOGIN
-```
-
----
-
-## `git flow release feature remove <id>`
-
-Undoes `add`, returning the feature to `pending`. Fails with
-`ErrFeatureNotAssignedToCurrentRelease` if `id` isn't currently included
-in the active release.
-
-```bash
-git flow release feature remove LOGIN
+# Merged feature "LOGIN" into staging and added it to the active release
 ```
 
 ---
 
 ## `git flow release feature defer <id>`
 
-Explicitly holds an approved feature back for a future release, moving it
-out of `included` if it was there. Same precondition errors as `add`.
+Explicitly holds an approved feature back for a future release. Bookkeeping
+only — no merge, no branch touched. Only works *before* `add` has merged
+the feature (same precondition errors as `add`, minus the merge step).
 
 ```bash
 git flow release feature defer REPORTS
 ```
+
+There is no `release feature remove`: once `add` has performed a real
+merge, reverting it isn't something Git Flow Plus attempts — see
+[ReleaseManagement.md](ReleaseManagement.md#release-feature-commands).
 
 ---
 

@@ -153,7 +153,7 @@ func newReleaseFeatureCmd(app *App) *cobra.Command {
 					return app.Println("No approved features.")
 				}
 				for _, f := range features {
-					if err := app.Printf("%-16s release=%-8s included=%v\n", f.ID, valueOrNone(f.Release), f.IncludedInRelease); err != nil {
+					if err := app.Printf("%-16s state=%-18s release=%s\n", f.ID, f.State, valueOrNone(f.Release)); err != nil {
 						return err
 					}
 				}
@@ -162,7 +162,7 @@ func newReleaseFeatureCmd(app *App) *cobra.Command {
 		},
 		&cobra.Command{
 			Use:   "add <id>",
-			Short: "Assign an approved feature to the active release (Release Planning)",
+			Short: "Merge an approved feature's branch into staging and include it in the active release (Release Planning)",
 			Args:  cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				cfg, err := app.LoadConfig()
@@ -172,22 +172,7 @@ func newReleaseFeatureCmd(app *App) *cobra.Command {
 				if err := app.ReleaseService(cfg).AddFeatureToRelease(cmd.Context(), args[0]); err != nil {
 					return err
 				}
-				return app.Printf("Added feature %q to the active release\n", args[0])
-			},
-		},
-		&cobra.Command{
-			Use:   "remove <id>",
-			Short: "Remove a feature from the active release, returning it to Pending",
-			Args:  cobra.ExactArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				cfg, err := app.LoadConfig()
-				if err != nil {
-					return err
-				}
-				if err := app.ReleaseService(cfg).RemoveFeatureFromRelease(cmd.Context(), args[0]); err != nil {
-					return err
-				}
-				return app.Printf("Removed feature %q from the active release\n", args[0])
+				return app.Printf("Merged feature %q into staging and added it to the active release\n", args[0])
 			},
 		},
 		&cobra.Command{
