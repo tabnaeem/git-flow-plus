@@ -1,0 +1,48 @@
+name: Release
+
+# Triggered by pushing a tag like "v1.2.0". Runs the full test suite and
+# linter (so a bad release can't slip through even if CI was skipped for
+# some reason), cross-compiles all six supported platforms, packages them
+# into per-platform archives, and attaches those archives to a GitHub
+# Release for the pushed tag.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history, so `git describe` resolves correctly
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: go test ./...
+
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+      - name: Build release binaries
+        env:
+          VERSION: ${{ github.ref_name }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: ./scripts/build.sh
+
+      - name: Package archives
+        run: ./scripts/package.sh
+
+      - name: Attach archives to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/archives/*
+          generate_release_notes: true

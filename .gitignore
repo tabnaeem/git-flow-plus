@@ -1,0 +1,19 @@
+# Build output
+/bin/
+/dist/
+*.exe
+*.test
+
+# Coverage
+*.out
+coverage.html
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local Git Flow Plus metadata created while testing the CLI
+/.gitflowplus/
+/.claude/
