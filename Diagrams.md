@@ -8,12 +8,15 @@ tools needed.
 This file is being built **incrementally** across five phases, per the
 current documentation initiative:
 
-- [x] **Phase 1 — Architecture diagrams** (this delivery)
-- [ ] Phase 2 — Workflow / lifecycle diagrams
+- [x] **Phase 1 — Architecture diagrams**
+- [x] **Phase 2 — Workflow / lifecycle diagrams** (this delivery)
 - [ ] Phase 3 — Full documentation set (Architecture.md, Workflow.md,
       DeveloperGuide.md, ReleaseManagerGuide.md, QAProcess.md,
       CommandReference.md, PresentationNotes.md)
-- [ ] Phase 4 — PowerPoint deck (`GitFlowPlus-Demo.pptx`)
+- [x] Phase 4 — PowerPoint deck (`GitFlowPlus-Team-Training.pptx`) — the
+      in-deck diagrams are native PowerPoint shapes rather than rendered
+      Mermaid, for print/screen quality; every one of them is backed by a
+      diagram in this file covering the same lifecycle
 - [ ] Phase 5 — Live demo script
 
 Every diagram below reflects the **actual current implementation** —
@@ -499,7 +502,7 @@ graph LR
     LOADER["config.Loader<br/>(Viper-backed)"]
     CFGOBJ["*config.Config<br/>(typed Go struct;<br/>falls back to config.Default()<br/>if the file doesn't exist yet)"]
     SVC["gitflow.Service /<br/>release.Service<br/>(cfg injected at construction)"]
-    RESOLVE["Branch name resolution<br/>e.g. cfg.Prefixes.Feature + \"LOGIN\"<br/>→ \"feature/LOGIN\""]
+    RESOLVE["Branch name resolution<br/>e.g. cfg.Prefixes.Feature + 'LOGIN'<br/>→ 'feature/LOGIN'"]
     GITCLIENTRESOLVE["git.Client<br/>(operates on the resolved,<br/>concrete branch name string —<br/>knows nothing about prefixes/config)"]
     REPORESOLVE[("Git Repository")]
 
@@ -560,11 +563,487 @@ code change.
 
 ---
 
+## 3. Feature Lifecycle (State Machine)
+
+**Purpose:** the explicit state machine backing `internal/feature` —
+`State.AtLeast()` uses the ordinal values shown on each transition, so
+e.g. a feature already `IncludedInRelease` still satisfies an `Approved`
+check.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Created: feature start<br/>(auto-registration)
+    Created --> InDevelopment: developer commits
+    InDevelopment --> AwaitingReview: pull request opened<br/>(not automatic)
+    AwaitingReview --> Approved: release feature approve
+    Created --> Approved: release feature approve<br/>(review step is optional)
+    Approved --> IncludedInRelease: release feature add<br/>(real merge — resync re-runs<br/>stay in this state)
+    IncludedInRelease --> Released: release finish
+    Released --> Archived: reserved for a future<br/>cleanup pass (not yet implemented)
+
+    note right of Approved
+        release feature defer
+        only valid before the
+        first `add` — once merged,
+        there is no "un-merge"
+    end note
+```
+
+**Key takeaway:** ordinals `0`–`6` (`Created` … `Archived`) exist purely so
+`AtLeast()` can do a single integer comparison instead of an explicit
+allow-list — the state machine itself has no other numeric meaning.
+
+---
+
+## 4. Release Lifecycle
+
+**Purpose:** the release-manifest-centric view — what `release.json` looks
+like at each stage, independent of which specific features/fixes are in
+it.
+
+```mermaid
+graph LR
+    NONE(["No active release"])
+    STARTED["Started<br/><i>release start SPRINT</i><br/>Sprint field set,<br/>Feature/Fix/DevOps/QA = 0"]
+    PLANNING["Planning<br/><i>release feature approve/defer</i><br/>candidates move Created→Approved"]
+    MERGING["Merging<br/><i>release feature add,<br/>releasefix finish, devops finish</i><br/>real merges into staging"]
+    BUILDING["QA Build Cut<br/><i>release build</i><br/>QA field++, tag pushed"]
+    QALOOP{"QA sign-off?"}
+    FINISHED["Finished<br/><i>release finish</i><br/>production tag,<br/>staging → main,<br/>branches deleted,<br/>manifest archived"]
+
+    NONE --> STARTED --> PLANNING --> MERGING --> BUILDING --> QALOOP
+    QALOOP -->|"defect found"| MERGING
+    QALOOP -->|"signed off"| FINISHED
+    FINISHED --> NONE
+
+    classDef state fill:#1f6feb,color:#fff;
+    classDef decision fill:#d29922,color:#000;
+    classDef terminal fill:#57606a,color:#fff;
+    class STARTED,PLANNING,MERGING,BUILDING state;
+    class QALOOP decision;
+    class NONE,FINISHED terminal;
+```
+
+**Key takeaway:** `release start` refuses a second concurrent release
+(`ErrReleaseAlreadyActive`), so this whole lifecycle is a single-threaded
+loop — the `QALOOP → MERGING` edge is the resync cycle from
+[§15 QA Iteration Lifecycle](#15-qa-iteration-lifecycle-in-the-slide-deck),
+and it can repeat any number of times before `FINISHED`.
+
+---
+
+## 5. QA Build Lifecycle
+
+**Purpose:** exactly what changes on each `release build` call —
+the only command that touches the version's 5th field.
+
+```mermaid
+sequenceDiagram
+    participant RM as Release Manager
+    participant CLI as CLI (release build)
+    participant Svc as release.Service
+    participant Ver as version.Version
+    participant Git as git.Client
+    participant Hooks as hooks.Runner
+
+    RM->>CLI: git flow release build
+    CLI->>Svc: Build(ctx)
+    Svc->>Ver: ApplyBuild()<br/>(QA field += 1)
+    Svc->>Git: TagCommit(ctx, "v5.3.4.1.2", richMessage)
+    Note over Svc: richMessage = Release, Version,<br/>QA Build, Features, ReleaseFixes,<br/>DevOps, Branch, Commit, RM, Date
+    Git-->>Svc: OK
+    Svc->>Svc: append BuildRecord to manifest<br/>Manifest.Builds
+    Svc->>Hooks: Run("post-qa-tag", tagCtx)
+    Hooks-->>Svc: (best-effort, errors logged not fatal)
+    Svc-->>CLI: BuildResult{Version, Tag}
+    CLI-->>RM: "QA build v5.3.4.1.2 tagged"
+```
+
+**Key takeaway:** `Build` never merges anything — it only tags and
+increments the QA counter. All merging happens earlier, via
+`release feature add` / `releasefix finish` / `devops finish`.
+
+---
+
+## 6. Release Fix Workflow
+
+**Purpose:** the release-fix branch's full path, contrasted with a
+feature branch — it starts and ends on `staging` directly, with no
+Release Manager approval gate (any developer can finish their own fix).
+
+```mermaid
+sequenceDiagram
+    participant QA as QA Engineer
+    participant Dev as Developer
+    participant CLI as CLI
+    participant GF as gitflow.Service
+    participant Git as git.Client
+
+    QA->>Dev: files defect BUG-101<br/>against active QA build
+    Dev->>CLI: git flow releasefix start BUG-101
+    CLI->>GF: ReleaseFixStart(ctx, "BUG-101")
+    GF->>Git: CreateBranch("release-fix/BUG-101", "staging")
+    Dev->>Dev: commit the fix
+    Dev->>CLI: git flow releasefix finish BUG-101
+    CLI->>GF: ReleaseFixFinish(ctx, "BUG-101")
+    GF->>Git: Merge("release-fix/BUG-101" → "staging")
+    Note over GF: branch is NOT deleted here —<br/>stays alive until release finish
+    GF-->>CLI: OK
+    CLI-->>Dev: "release-fix/BUG-101 merged into staging"
+    Note over Dev: version is unchanged<br/>Release Manager must run<br/>release build to cut a new QA tag
+```
+
+**Key takeaway:** unlike a feature, a release fix needs no
+`release feature approve`/`add` step — merging is self-service, because
+the defect was already found during this release's own QA cycle. The
+version only moves when `release build` runs next.
+
+---
+
+## 7. DevOps Workflow
+
+**Purpose:** `devops start`/`finish` mirrors the release-fix shape
+exactly, but the branch is scoped to infrastructure/pipeline changes and
+tracked in a separate `devops` bucket in the manifest.
+
+```mermaid
+sequenceDiagram
+    participant Ops as DevOps Engineer
+    participant CLI as CLI
+    participant GF as gitflow.Service
+    participant Git as git.Client
+    participant Manifest as release.json
+
+    Ops->>CLI: git flow devops start CI-PIPELINE-UPDATE
+    CLI->>GF: DevOpsStart(ctx, "CI-PIPELINE-UPDATE")
+    GF->>Git: CreateBranch("release-devops/CI-PIPELINE-UPDATE", "staging")
+    Ops->>Ops: update pipeline config, commit
+    Ops->>CLI: git flow devops finish CI-PIPELINE-UPDATE
+    CLI->>GF: DevOpsFinish(ctx, "CI-PIPELINE-UPDATE")
+    GF->>Git: Merge("release-devops/CI-PIPELINE-UPDATE" → "staging")
+    Note over GF: branch survives until release finish
+    GF-->>Manifest: devops.included += "CI-PIPELINE-UPDATE"
+    CLI-->>Ops: "release-devops/CI-PIPELINE-UPDATE merged"
+```
+
+**Key takeaway:** DevOps changes never bump the version by themselves —
+same as a release fix, only `release build` (QA field) and
+`release feature add` (Feature field) move version numbers; DevOps merges
+only move the manifest's `devops.included` list.
+
+---
+
+## 9. Version Increment Flow
+
+**Purpose:** which of the five `Sprint.Feature.ReleaseFix.DevOps.QA`
+fields each command touches — the single most-asked question in
+onboarding, made visual.
+
+```mermaid
+graph TD
+    V["Version<br/>Sprint.Feature.ReleaseFix.DevOps.QA"]
+
+    S["release start SPRINT<br/><b>sets</b> Sprint;<br/>resets Feature/ReleaseFix/DevOps/QA to 0"]
+    F["release feature add<br/><b>Feature += 1</b><br/>(skipped on resync)"]
+    RF["releasefix finish<br/><b>ReleaseFix += 1</b>"]
+    D["devops finish<br/><b>DevOps += 1</b>"]
+    Q["release build<br/><b>QA += 1</b><br/>(only command that moves this field)"]
+
+    S -.-> V
+    F -.-> V
+    RF -.-> V
+    D -.-> V
+    Q -.-> V
+
+    classDef cmd fill:#1f6feb,color:#fff;
+    classDef ver fill:#7c3aed,color:#fff;
+    class S,F,RF,D,Q cmd;
+    class V ver;
+```
+
+**Key takeaway:** every field has exactly one command that can move it —
+there is no path in the codebase where two fields change from a single
+action, which is what makes the version string an unambiguous audit
+summary on its own.
+
+---
+
+## 10. Release Manager Responsibilities
+
+**Purpose:** everything gated behind the Release Manager role, grouped by
+release phase.
+
+```mermaid
+graph TB
+    subgraph OPEN["Opening a Release"]
+        RS["release start SPRINT"]
+    end
+    subgraph PLAN["Planning"]
+        RFL["release feature list"]
+        RFA["release feature approve"]
+        RFD["release feature defer"]
+    end
+    subgraph INTEGRATE["Integration"]
+        RFAdd["release feature add<br/>(real merge + resync)"]
+    end
+    subgraph VERIFY["QA Verification"]
+        RB["release build<br/>(cut QA tag)"]
+        RSt["release status / manifest"]
+    end
+    subgraph CLOSE["Closing"]
+        RF["release finish<br/>(prod tag, merge to main,<br/>delete branches, archive manifest)"]
+    end
+
+    OPEN --> PLAN --> INTEGRATE --> VERIFY --> CLOSE
+    VERIFY -.->|"defect: back to"| INTEGRATE
+
+    classDef rm fill:#7c3aed,color:#fff;
+    class RS,RFL,RFA,RFD,RFAdd,RB,RSt,RF rm;
+```
+
+**Key takeaway:** every command in this diagram is Release-Manager-only —
+a developer or QA engineer has read access (`status`/`manifest`/`list`)
+but no write path into any of these boxes.
+
+---
+
+## 11. Developer Responsibilities
+
+**Purpose:** the mirror image of §10 — everything a developer can do, and
+the explicit boundary (there is no `feature finish`) where their
+responsibility ends.
+
+```mermaid
+graph TB
+    subgraph START["Starting Work"]
+        FS["feature start NAME<br/>(auto-registers as Created)"]
+    end
+    subgraph DEV["Developing"]
+        C["commit (as many as needed)"]
+        DEVEL["optionally merge via `develop`<br/>to unit-test against other<br/>in-flight feature branches"]
+    end
+    subgraph SHIP["Shipping"]
+        P["push origin feature/NAME"]
+        PR["open a pull request"]
+    end
+    subgraph BOUNDARY["Hard boundary — developer cannot cross"]
+        X["✗ no feature finish<br/>✗ cannot merge into staging<br/>✗ cannot approve their own feature"]
+    end
+    subgraph FOLLOWUP["QA Follow-up (same branch)"]
+        FIX["commit a fix to the<br/>still-alive feature branch"]
+    end
+
+    START --> DEV --> SHIP --> BOUNDARY
+    BOUNDARY -.->|"Release Manager decides"| FOLLOWUP
+    FOLLOWUP -.->|"branch already merged once;<br/>RM re-runs `add` (resync)"| BOUNDARY
+
+    classDef dev fill:#2ea043,color:#fff;
+    classDef boundary fill:#8b949e,color:#fff,stroke-dasharray: 5 3;
+    class FS,C,DEVEL,P,PR,FIX dev;
+    class X,BOUNDARY boundary;
+```
+
+**Key takeaway:** the only two developer actions that exist *after* a
+feature has been merged are "commit a fix" and "wait" — every state
+transition past that point belongs to the Release Manager.
+
+---
+
+## 12. Build History Lifecycle
+
+**Purpose:** `Manifest.Builds []BuildRecord` — the append-only list every
+`release build` call writes to, and what happens to it at `release
+finish`.
+
+```mermaid
+graph LR
+    B1["BuildRecord #1<br/>QA=1, tag v5.3.4.1.1<br/>timestamp, commit SHA"]
+    B2["BuildRecord #2<br/>QA=2, tag v5.3.4.1.2<br/>(after a resync)"]
+    B3["BuildRecord #3<br/>QA=3, tag v5.3.4.1.3<br/>(signed off)"]
+    ARCHIVE["Archived Manifest<br/><i>release finish copies the<br/>full Builds slice into the<br/>archived release record —<br/>nothing is dropped</i>"]
+
+    B1 --> B2 --> B3 --> ARCHIVE
+
+    classDef build fill:#d29922,color:#000;
+    classDef archive fill:#57606a,color:#fff;
+    class B1,B2,B3 build;
+    class ARCHIVE archive;
+```
+
+**Key takeaway:** `Builds` is strictly additive for the life of a release
+— nothing is ever overwritten or removed, so "how many QA cycles did
+release 5.3 take" is always answerable from the archived manifest alone.
+
+---
+
+## 13. Manifest Lifecycle
+
+**Purpose:** `release.json`'s own life, from creation to archival —
+distinct from the release lifecycle in §4, which is about *state*; this
+is about the *file*.
+
+```mermaid
+graph TD
+    CREATE["release start<br/>writes fresh release.json<br/>{features:{}, releaseFixes:{}, devops:{},<br/>featureHistory:[], builds:[]}"]
+    MUTATE["Every release-scoped command<br/>(feature add/approve/defer,<br/>releasefix/devops finish,<br/>release build)<br/>reads, mutates, and rewrites<br/>the same release.json"]
+    ARCHIVE["release finish<br/>copies release.json into<br/>.gitflowplus/releases/5.3.json<br/>(permanent archive)"]
+    RESET["Working release.json<br/>is cleared — repo returns to<br/>'no active release' state"]
+
+    CREATE --> MUTATE --> ARCHIVE --> RESET
+
+    classDef step fill:#1f6feb,color:#fff;
+    classDef archive fill:#7c3aed,color:#fff;
+    class CREATE,MUTATE step;
+    class ARCHIVE,RESET archive;
+```
+
+**Key takeaway:** there is exactly one *live* `release.json` at a time
+(enforced by `ErrReleaseAlreadyActive`), but an unlimited, permanent
+history of *archived* ones — past releases stay queryable forever, they
+just aren't the one being mutated.
+
+---
+
+## 14. Git Tag Lifecycle
+
+**Purpose:** the tag timeline across a release, and the distinction
+between a QA tag and the single production tag — the source diagram for
+[Slide 13 of the training deck](#git-tag-strategy).
+
+```mermaid
+gitGraph
+   commit id: "release start 5.3"
+   branch staging
+   commit id: "feature/LOGIN merged"
+   commit id: "release build" tag: "v5.3.1.0.1"
+   commit id: "defect fix (resync)"
+   commit id: "release build" tag: "v5.3.1.0.2"
+   commit id: "QA signs off"
+   checkout main
+   merge staging id: "release finish" tag: "v5.3.1.0.2"
+```
+
+**Key takeaway:** the production tag always lands on the exact same
+version string as the last QA-signed-off build — that equality is the
+proof that what QA tested is what shipped, not a separately-built
+artifact.
+
+---
+
+## 15. Complete SDLC Flow
+
+**Purpose:** the single end-to-end picture — every actor, every branch,
+every command, one release from open to close. This is the diagram
+[Slide 16 of the training deck](#complete-release-lifecycle) is built
+from.
+
+```mermaid
+graph TB
+    RM1["Release Manager:<br/>release start 5.3"]
+    DEV1["Developers:<br/>feature start (parallel, many)"]
+    PR["Developers:<br/>commit, push, open PRs"]
+    RM2["Release Manager:<br/>review, approve, add<br/>(real merges into staging)"]
+    RM3["Release Manager:<br/>release build<br/>(QA tag cut)"]
+    QA1["QA Engineer:<br/>test the tagged build"]
+    DECIDE{"Defects found?"}
+    FIXPATH["Developer/DevOps:<br/>commit fix to same branch<br/>(feature / release-fix / devops)"]
+    RESYNC["Release Manager:<br/>re-run add / finish<br/>(resync, no double-count)"]
+    SIGNOFF["QA Engineer:<br/>sign off"]
+    RM4["Release Manager:<br/>release finish<br/>(prod tag, staging→main,<br/>branch cleanup, archive)"]
+    PROD(["Production"])
+
+    RM1 --> DEV1 --> PR --> RM2 --> RM3 --> QA1 --> DECIDE
+    DECIDE -->|"yes"| FIXPATH --> RESYNC --> RM3
+    DECIDE -->|"no"| SIGNOFF --> RM4 --> PROD
+
+    classDef rm fill:#7c3aed,color:#fff;
+    classDef dev fill:#2ea043,color:#fff;
+    classDef qa fill:#d29922,color:#000;
+    classDef decision fill:#8b949e,color:#fff;
+    classDef prod fill:#1f6feb,color:#fff;
+    class RM1,RM2,RM3,RM4,RESYNC rm;
+    class DEV1,PR,FIXPATH dev;
+    class QA1,SIGNOFF qa;
+    class DECIDE decision;
+    class PROD prod;
+```
+
+**Key takeaway:** there is exactly one path to `Production`, and it
+always passes through `release finish` — no actor, including the Release
+Manager, has a shortcut around it.
+
+---
+
+## 16. Command Interaction Diagram
+
+**Purpose:** which commands read vs. write each piece of persistent
+state (`config.json`, `features.json`, `release.json`, Git itself) — the
+diagram to check before adding a new command, to see what it should and
+shouldn't touch.
+
+```mermaid
+graph LR
+    subgraph CMDS["Commands"]
+        INIT["init"]
+        FSTART["feature start"]
+        RFA2["release feature add"]
+        RFXF["releasefix finish"]
+        DOF["devops finish"]
+        RBUILD["release build"]
+        RFINISH["release finish"]
+        STATUS["release status /<br/>manifest / version"]
+    end
+
+    subgraph STATE["Persistent State"]
+        CFGJSON["config.json"]
+        FEATJSON["features.json"]
+        RELJSON["release.json"]
+        GITSTATE[("Git branches, commits, tags")]
+    end
+
+    INIT -->|"write"| CFGJSON
+    INIT -->|"write"| GITSTATE
+    FSTART -->|"read"| CFGJSON
+    FSTART -->|"write"| FEATJSON
+    FSTART -->|"write"| GITSTATE
+    RFA2 -->|"read"| FEATJSON
+    RFA2 -->|"write"| FEATJSON
+    RFA2 -->|"write"| RELJSON
+    RFA2 -->|"write"| GITSTATE
+    RFXF -->|"write"| RELJSON
+    RFXF -->|"write"| GITSTATE
+    DOF -->|"write"| RELJSON
+    DOF -->|"write"| GITSTATE
+    RBUILD -->|"write"| RELJSON
+    RBUILD -->|"write"| GITSTATE
+    RFINISH -->|"write"| FEATJSON
+    RFINISH -->|"write"| RELJSON
+    RFINISH -->|"write"| GITSTATE
+    STATUS -->|"read only"| RELJSON
+
+    classDef cmd fill:#1f6feb,color:#fff;
+    classDef state fill:#57606a,color:#fff;
+    class INIT,FSTART,RFA2,RFXF,DOF,RBUILD,RFINISH,STATUS cmd;
+    class CFGJSON,FEATJSON,RELJSON,GITSTATE state;
+```
+
+**Key takeaway:** `release status`/`manifest`/`version` are the only
+read-only commands in the whole tool — every other command listed here
+writes to at least `GITSTATE`, which is why Git Flow Plus has no
+"dry-run" mode: every mutating command's effect is a real, inspectable
+Git operation, not a simulated one.
+
+---
+
 ## What's next
 
-**Phase 2 (next delivery)** covers the remaining 13 diagrams from the
-original list — all lifecycle/workflow-oriented: Feature Lifecycle,
-Release Lifecycle, QA Build Lifecycle, Release Fix Workflow, DevOps
-Workflow, Version Increment Flow, Release Manager Responsibilities,
-Developer Responsibilities, Build History Lifecycle, Manifest Lifecycle,
-Git Tag Lifecycle, Complete SDLC Flow, and Command Interaction Diagram.
+All 20 originally-scoped diagrams are now delivered across Phases 1 and
+2. Remaining work in the documentation initiative:
+
+- [ ] **Phase 3** — the full documentation set (Architecture.md rewrite,
+      new Workflow.md/ReleaseManagerGuide.md/QAProcess.md/
+      PresentationNotes.md, CommandReference.md rewrite)
+- [ ] **Phase 5** — the live demo script (a fuller, standalone document
+      beyond the in-deck Slide 18 demo script and speaker notes)
+- [ ] README.md rewrite with embedded architecture/workflow diagrams and
+      a FAQ section
