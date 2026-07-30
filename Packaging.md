@@ -115,7 +115,55 @@ recipe, always machine-wide since the installer only supports
 `RequestExecutionLevel admin` (no per-user mode, unlike the project's
 earlier Inno Setup prototype).
 
+### Wired into GoReleaser: `hooks.post` and `extra_files`
+
+The installer is not a separate, after-the-fact step — it's built
+*during* GoReleaser's own build phase and published *by* GoReleaser's
+own release step, via two ordinary GoReleaser mechanisms:
+
+- **`builds[].hooks.post`** in `.goreleaser.yaml` runs
+  [build/windows/build-installer-hook.ps1](build/windows/build-installer-hook.ps1)
+  once for every `(GOOS, GOARCH)` target the build produces — six times
+  in one `goreleaser release` run. The hook is a no-op for every target
+  except `windows/amd64` (the only one `installer.nsi` packages); for
+  that one target it calls `create-installer.ps1` with the binary
+  GoReleaser just wrote (`{{ .Path }}`) and the version being released
+  (`{{ .Version }}`), producing
+  `dist/installer/GitFlowPlusSetup_v<version>_x64.exe` well before
+  GoReleaser reaches its archive/checksum/publish phases — a *post*-
+  build hook runs after that target's binary exists, not after the
+  whole pipeline finishes.
+- **`release.extra_files`** and **`checksum.extra_files`** both glob
+  `dist/installer/GitFlowPlusSetup_*.exe`, so the installer gets
+  uploaded to the GitHub Release and included in `checksums.txt`
+  exactly like any GoReleaser-native artifact, with no manual copy step
+  anywhere in between.
+
+The practical effect: **a hook that fails aborts the entire
+`goreleaser release` command**, confirmed empirically against
+GoReleaser v2.17.0 during development (a deliberately-failing hook
+produced `build failed`, not a partial release). So there's no separate
+"did the installer actually get built" check to maintain — if
+`create-installer.ps1` doesn't produce the expected file (it verifies
+this itself and throws if not), the release never reaches the publish
+step at all. This is also why `.goreleaser.yaml` must run on a Windows
+host with `makensis` on `PATH` — see
+[ReleaseProcess.md](ReleaseProcess.md) for why that means the whole
+`goreleaser` CI job runs on `windows-latest`, not `ubuntu-latest`.
+
 ### Building locally
+
+The normal path is simply running GoReleaser itself from a Windows
+machine with NSIS installed — the `hooks.post` above builds the
+installer as part of the same command, no separate invocation needed:
+
+```powershell
+goreleaser release --snapshot --clean   # or `make package`
+# → dist\installer\GitFlowPlusSetup_v<version>_x64.exe, already in dist\checksums.txt
+```
+
+To iterate on just the installer itself without a full 6-platform
+cross-compile, call the same script the hook calls directly:
 
 ```powershell
 # 1. Build the binary (see Building.md for the full ldflags-stamped command)

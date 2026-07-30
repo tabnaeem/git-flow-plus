@@ -13,11 +13,12 @@ git push origin v5.3.4.1.2
 ```
 
 Pushing a tag matching `v*` is the entire trigger. Everything else —
-testing, linting, cross-compiling, packaging, checksumming, changelog
-generation, publishing the GitHub Release, building and attaching the
-Windows installer and macOS `.pkg` — happens automatically in
-`.github/workflows/release.yml`. There is no separate manual packaging
-step; if the tag builds and publishes, the release is done.
+testing, linting, cross-compiling, packaging, checksumming, SBOM
+generation, changelog generation, **building the Windows installer**,
+publishing the GitHub Release, and attaching the macOS `.pkg` — happens
+automatically in `.github/workflows/release.yml`. There is no separate
+manual packaging step, and no manual copying of the installer into
+place; if the tag builds and publishes, the release is done.
 
 ## What the tag should look like
 
@@ -50,74 +51,80 @@ shipped.
 
 ```mermaid
 graph LR
-    TAG["git push origin v5.3.4.1.2"] --> GR["goreleaser job (ubuntu)"]
-    GR -->|"release now exists"| WIN["windows-installer job"]
+    TAG["git push origin v5.3.4.1.2"] --> GR["goreleaser job (windows-latest)"]
     GR -->|"release now exists"| MAC["macos-pkg job"]
     GR --> R0["tag-exists guard"]
     R0 --> R1["test + lint"]
-    R1 --> R2["cross-compile all 6 platforms + embed icon/version"]
-    R2 --> R3["archives + checksums.txt + deb/rpm + SBOM"]
-    R3 --> R4["changelog + GitHub Release created"]
-    R4 --> R5["attest build provenance"]
-    WIN --> W1["build windows/amd64"]
-    W1 --> W2["embed icon/version (go-winres)"]
-    W2 --> W3["NSIS: GitFlowPlusSetup_v_x64.exe"]
-    W3 --> W4["checksums + gh release upload"]
+    R1 --> R2["install NSIS + syft"]
+    R2 --> R3["cross-compile all 6 platforms + embed icon/version"]
+    R3 --> R4["build hook: windows/amd64 -> NSIS installer"]
+    R4 --> R5["archives + checksums.txt (incl. installer) + deb/rpm + SBOM"]
+    R5 --> R6["changelog + GitHub Release created (incl. installer via extra_files)"]
+    R6 --> R7["verify installer exists + attest build provenance"]
     MAC --> M1["build darwin/amd64+arm64"]
     M1 --> M2["lipo universal binary"]
     M2 --> M3["pkgbuild + productbuild -> .pkg"]
     M3 --> M4["checksums + gh release upload"]
 ```
 
-1. **`goreleaser`** (ubuntu-latest) — after the tag-exists guard above,
-   runs `go test ./...` and `golangci-lint run`, installs `syft`, then
-   `goreleaser release --clean`. This one step cross-compiles all 6
-   `GOOS`/`GOARCH` targets, archives them, writes `checksums.txt`,
-   generates one SBOM per archive, builds `.deb`/`.rpm`, generates a
-   changelog from commit history, and **creates the GitHub Release** —
-   every later job depends on this release already existing, since they
-   attach to it rather than creating their own. A final step attests
-   build provenance (`actions/attest-build-provenance@v2`) for every
-   archive, package, and SBOM — see
+1. **`goreleaser`** (**windows-latest**) — after the tag-exists guard
+   above, runs `go test ./...` and `golangci-lint run`, installs NSIS
+   and `syft`, then `goreleaser release --clean`. This **one command**
+   cross-compiles all 6 `GOOS`/`GOARCH` targets, embeds the icon/version
+   resource, builds the NSIS installer as soon as the `windows/amd64`
+   binary exists (via the `builds[].hooks.post` described in
+   [Packaging.md#wired-into-goreleaser-hookspost-and-extra_files](Packaging.md#wired-into-goreleaser-hookspost-and-extra_files)),
+   archives everything, writes `checksums.txt` (including the
+   installer), generates one SBOM per archive, builds `.deb`/`.rpm`,
+   generates a changelog from commit history, and **creates the GitHub
+   Release** with the installer attached via `extra_files` — all as one
+   atomic operation. A dedicated step afterward double-checks the
+   installer landed in `dist/installer/` (belt-and-suspenders: the build
+   hook failing would already have aborted the run before this point),
+   then a final step attests build provenance
+   (`actions/attest-build-provenance@v2`) for every archive, package,
+   SBOM, **and the installer** — see
    [Build provenance attestation](#build-provenance-attestation) below.
-2. **`windows-installer`** (windows-latest, `needs: goreleaser`) —
-   independently rebuilds the `windows/amd64` binary with matching
-   `-ldflags` (simpler and just as fast as passing artifacts between
-   jobs on different runners) after embedding the icon/version resource
-   via `go-winres`, compiles the NSIS installer via
-   [build/windows/create-installer.ps1](build/windows/create-installer.ps1),
-   generates `windows-checksums.txt`, and `gh release upload`s both to
-   the release the first job created.
-3. **`macos-pkg`** (macos-latest, `needs: goreleaser`) — same idea:
-   rebuilds the darwin binaries, runs
+   The `macos-pkg` job depends on this release already existing, since
+   it attaches to it rather than creating its own.
+2. **`macos-pkg`** (macos-latest, `needs: goreleaser`) — rebuilds the
+   darwin binaries with matching `-ldflags`, runs
    [scripts/package-macos-pkg.sh](scripts/package-macos-pkg.sh) to
-   produce a universal `.pkg`, checksums it, uploads it.
+   produce a universal `.pkg`, checksums it, and `gh release upload`s it
+   to the release the first job created.
 
-Windows and macOS run as **separate jobs**, not inside GoReleaser
-itself, because NSIS and `lipo`/`pkgbuild`/`productbuild` only exist on
-their native OS — GoReleaser can cross-compile Go binaries for any
-platform from one runner, but it can't cross-*package* a platform-native
-installer.
+Only macOS runs as a **separate job**: `pkgbuild`/`productbuild`/`lipo`
+only exist on macOS, and have nothing to do with GoReleaser's own
+pipeline, so packaging the `.pkg` has to happen after the fact once the
+release exists. The Windows installer doesn't need this treatment —
+Go's cross-compilation is host-independent (a Windows host cross-
+compiles the linux/darwin targets exactly as easily as a Linux host
+cross-compiles windows targets), and `nfpm`'s `.deb`/`.rpm` packaging is
+pure Go with no OS-native tool dependency either. That symmetry is what
+lets the `goreleaser` job simply run on `windows-latest` instead of
+`ubuntu-latest`, folding NSIS packaging into the same run instead of
+needing its own follow-up job.
 
 ## Build provenance attestation
 
 The `goreleaser` job's final step runs
 `actions/attest-build-provenance@v2` over every archive, `.deb`/`.rpm`,
-and SBOM it produced (`permissions: id-token: write, attestations:
-write` at the workflow level enable this). This creates a verifiable,
-signed record — hosted by GitHub, not this repository — of exactly
-which workflow run, commit, and source repository produced a given
-artifact. Anyone can verify a downloaded artifact wasn't tampered with
-or substituted after the fact:
+SBOM, **and the Windows installer** it produced (`permissions: id-token:
+write, attestations: write` at the workflow level enable this). This
+creates a verifiable, signed record — hosted by GitHub, not this
+repository — of exactly which workflow run, commit, and source
+repository produced a given artifact. Anyone can verify a downloaded
+artifact wasn't tampered with or substituted after the fact:
 
 ```bash
 gh attestation verify git-flow-plus-linux-amd64.tar.gz --repo tabnaeem/git-flow-plus
+gh attestation verify GitFlowPlusSetup_v5.3.4.1.2_x64.exe --repo tabnaeem/git-flow-plus
 ```
 
-The Windows installer and macOS `.pkg` are built in their own,
-separate jobs (see above) and are not currently covered by this
-attestation step — a candidate follow-up, not a gap in the core
-archives/packages GoReleaser itself produces.
+The macOS `.pkg` is built in its own, separate job (see above) and is
+not currently covered by this attestation step — a candidate follow-up,
+not a gap in the core archives/packages/installer GoReleaser itself
+produces.
 
 ## Verifying a release after it publishes
 

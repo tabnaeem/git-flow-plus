@@ -8,16 +8,22 @@
 #   goreleaser release --snapshot --clean
 # (or `make package`, which calls exactly that)
 #
-# CI (.github/workflows/release.yml) runs `goreleaser release --clean` on
-# every "v*" tag push, which additionally publishes the GitHub Release.
-# The Windows installer (NSIS) and macOS .pkg are NOT built here — nfpm
-# (below) only knows how to produce Linux packages, and NSIS/pkgbuild
-# have nothing to do with GoReleaser's own build/archive pipeline. Both
-# are built in their own CI jobs (windows-latest / macos-latest, since
-# makensis and pkgbuild only run on their native OS) and uploaded to the
-# release GoReleaser creates via `gh release upload`, once it exists —
-# see build/windows/create-installer.ps1, scripts/package-macos-pkg.sh,
-# and Packaging.md.
+# This MUST run on a Windows host (locally, or windows-latest in CI —
+# see release.yml) with NSIS's makensis on PATH. The windows/amd64
+# build's `hooks.post` (below) runs build/windows/create-installer.ps1
+# right after that binary is written, producing
+# dist/installer/GitFlowPlusSetup_v<version>_x64.exe before GoReleaser
+# ever reaches its archive/checksum/publish phases — the `release.
+# extra_files`/`checksum.extra_files` blocks below then treat it exactly
+# like any other release artifact. This is deliberately NOT a separate
+# post-hoc CI job that uploads after the fact: a hook that fails aborts
+# the whole `goreleaser release` run before anything gets published (see
+# build/windows/build-installer-hook.ps1's own comments), so a missing
+# installer can never ship as a silently-incomplete release. macOS's
+# .pkg still can't be built here — pkgbuild/productbuild only exist on
+# macOS, and have nothing to do with GoReleaser's own pipeline — so that
+# stays a separate CI job; see scripts/package-macos-pkg.sh and
+# Packaging.md.
 version: 2
 
 project_name: git-flow-plus
@@ -74,6 +80,19 @@ builds:
       # inputs — see Packaging.md#reproducible-builds.
       - -X github.com/tabnaeem/git-flow-plus/internal/cli.BuildDate={{ .CommitDate }}
     mod_timestamp: "{{ .CommitTimestamp }}"
+    hooks:
+      # Fires once per (Os, Arch) target this build produces — six times
+      # total. build-installer-hook.ps1 itself no-ops for every target
+      # except windows/amd64 (installer.nsi is x64-only); template vars
+      # (.Os/.Arch/.Path/.Version) are GoReleaser's own build-hook
+      # context, confirmed against v2.17.0 during development.
+      post:
+        - cmd: >-
+            powershell.exe -NoProfile -ExecutionPolicy Bypass
+            -File build/windows/build-installer-hook.ps1
+            -Os {{ .Os }} -Arch {{ .Arch }} -BinaryPath "{{ .Path }}"
+            -Version {{ .Version }}
+          output: true
 
 archives:
   - id: git-flow-plus
@@ -94,6 +113,11 @@ archives:
 checksum:
   name_template: "checksums.txt"
   algorithm: sha256
+  extra_files:
+    # The NSIS installer isn't a GoReleaser-built artifact (it comes
+    # from the build hook above), so it needs to be listed explicitly
+    # to land in checksums.txt alongside everything else.
+    - glob: "./dist/installer/GitFlowPlusSetup_*.exe"
 
 # One CycloneDX SBOM per archive, listing every Go module compiled into
 # that binary — attached to the release alongside the archive itself.
@@ -107,8 +131,9 @@ sboms:
       - "{{ .ArtifactName }}.sbom.json"
 
 # .deb and .rpm for Linux — satisfies BUILD PIPELINE's "Linux: deb, rpm".
-# Windows (.exe/.msi) and macOS (.pkg) are built separately (see the
-# header comment above) since nfpm only targets Linux.
+# macOS's .pkg is built separately (see the header comment above) since
+# nfpm only targets Linux; the Windows installer is handled by this
+# build's own hooks.post, above.
 nfpms:
   - id: git-flow-plus
     ids:
@@ -151,6 +176,11 @@ release:
   github:
     owner: tabnaeem
     name: git-flow-plus
+  extra_files:
+    # Uploads the NSIS installer the build hook produced (see the
+    # header comment) as an additional release asset, the same way
+    # GoReleaser uploads its own archives/packages.
+    - glob: "./dist/installer/GitFlowPlusSetup_*.exe"
   name_template: "Git Flow Plus {{ .Tag }}"
   header: |
     See [ReleaseNotes.md](https://github.com/tabnaeem/git-flow-plus/blob/main/ReleaseNotes.md) for the full changelog and [Installation.md](https://github.com/tabnaeem/git-flow-plus/blob/main/Installation.md) to get started.

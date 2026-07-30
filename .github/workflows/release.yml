@@ -1,30 +1,48 @@
 name: Release
 
-# Triggered by pushing a tag like "v5.3.4.1.2". Three jobs:
-#   goreleaser        (ubuntu)  refuses to run if a release for this tag
-#                                already exists (releases are immutable —
-#                                see below), then tests, lints,
-#                                cross-compiles all 6 platforms via
-#                                GoReleaser, packages archives +
-#                                checksums + SBOM + .deb/.rpm, creates
-#                                the GitHub Release itself, and attests
-#                                build provenance for every artifact.
-#   windows-installer  (windows) builds the NSIS .exe and uploads it to
-#                                the release the goreleaser job just
-#                                created.
-#   macos-pkg           (macos)  builds a universal .pkg and uploads it
-#                                the same way.
-# windows-installer/macos-pkg can't run inside GoReleaser itself — NSIS
-# and pkgbuild/productbuild only exist on their native OS — so they run
-# as separate jobs gated on the release already existing. See
-# Packaging.md and ReleaseProcess.md for the full writeup.
+# Triggered by pushing a tag like "v5.3.4.1.2". Two jobs:
+#   goreleaser  (windows)  refuses to run if a release for this tag
+#                          already exists (releases are immutable — see
+#                          below), then tests, lints, cross-compiles all
+#                          6 platforms via GoReleaser, packages archives
+#                          + checksums + SBOM + .deb/.rpm, builds the
+#                          NSIS Windows installer as part of that same
+#                          run, creates the GitHub Release itself, and
+#                          attests build provenance for every artifact.
+#   macos-pkg   (macos)    builds a universal .pkg and uploads it to the
+#                          release the goreleaser job just created.
 #
-# Immutability: neither Windows/macOS upload step uses `gh release
-# upload --clobber` — if an asset with that name already exists (e.g. a
-# job is manually re-run against an already-published release), the
-# upload fails loudly instead of silently overwriting a published
-# artifact. A genuinely bad release should be fixed by yanking it and
-# publishing a new tag, not by mutating one that already shipped.
+# Why `goreleaser` runs on windows-latest, not ubuntu-latest: the NSIS
+# installer is built by this build's own `hooks.post` in
+# .goreleaser.yaml, which requires makensis on PATH — and NSIS only
+# exists on Windows. Go's cross-compilation is host-independent (a
+# Windows host cross-compiles linux/darwin targets exactly as easily as
+# a Linux host cross-compiles windows targets), and nfpm's .deb/.rpm
+# packaging is pure Go with no OS-native tool dependency either, so
+# nothing else about the pipeline needs to move — this one runs-on
+# change is what lets a single `goreleaser release` produce and publish
+# every artifact, including the installer, instead of a separate
+# after-the-fact upload job. macOS's .pkg still can't be folded in the
+# same way — pkgbuild/productbuild only exist on macOS — so that stays
+# its own job, gated on the release already existing. See Packaging.md
+# and ReleaseProcess.md for the full writeup.
+#
+# Immutability: neither GoReleaser's own publish step nor the macOS
+# upload step uses `--clobber` — if an asset with that name already
+# exists (e.g. a job is manually re-run against an already-published
+# release), the upload fails loudly instead of silently overwriting a
+# published artifact. A genuinely bad release should be fixed by
+# yanking it and publishing a new tag, not by mutating one that already
+# shipped.
+#
+# Fail-fast on a missing installer: build-installer-hook.ps1 runs
+# strictly before GoReleaser's archive/checksum/publish phases (that's
+# what a *post*-build hook means), and a non-zero exit from it aborts
+# the whole `goreleaser release` command immediately — confirmed
+# empirically during development (a failing hook produces "build
+# failed", not a partial release). So there's no separate "does the
+# installer exist" check to keep in sync: if it's missing, the release
+# never gets far enough to publish anything at all.
 on:
   push:
     tags:
@@ -37,13 +55,14 @@ permissions:
 
 jobs:
   goreleaser:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # full history, so GoReleaser's changelog resolves correctly
 
       - name: Verify this release doesn't already exist
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -68,6 +87,13 @@ jobs:
         with:
           version: latest
 
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install -y nsis --no-progress
+          }
+
       - name: Install syft (SBOM generation)
         uses: anchore/sbom-action/download-syft@v0
 
@@ -80,81 +106,21 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BUILD_NUMBER: ${{ github.run_number }}
 
+      - name: Verify the Windows installer was produced
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(dist/installer/GitFlowPlusSetup_*.exe)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::No GitFlowPlusSetup_*.exe found under dist/installer/ after goreleaser release. The installer build hook should have failed the release before reaching this point — if you're seeing this, that fail-fast mechanism itself regressed."
+            exit 1
+          fi
+          echo "Found installer: ${files[0]}"
+
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: "dist/*.tar.gz,dist/*.zip,dist/*.deb,dist/*.rpm,dist/*.sbom.json"
-
-  windows-installer:
-    needs: goreleaser
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-
-      - name: Install NSIS
-        shell: pwsh
-        run: |
-          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
-            choco install -y nsis --no-progress
-          }
-
-      - name: Embed icon and version resource
-        shell: bash
-        run: |
-          set -euo pipefail
-          go install github.com/tc-hib/go-winres@latest
-          go-winres simply \
-            --arch amd64 \
-            --out cmd/git-flow-plus/rsrc \
-            --product-version git-tag \
-            --file-version git-tag \
-            --manifest cli \
-            --file-description "Git Flow Plus" \
-            --product-name "Git Flow Plus" \
-            --copyright "Copyright (c) Git Flow Plus Contributors" \
-            --original-filename git-flow-plus.exe \
-            --icon build/windows/icon.ico
-
-      - name: Build windows/amd64 binary
-        shell: bash
-        env:
-          LDFLAGS_PKG: github.com/tabnaeem/git-flow-plus/internal/cli
-        run: |
-          set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          mkdir -p dist/windows-x64
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
-            -ldflags "-s -w \
-              -X ${LDFLAGS_PKG}.Version=${VERSION} \
-              -X ${LDFLAGS_PKG}.BuildNumber=${{ github.run_number }} \
-              -X ${LDFLAGS_PKG}.GitCommit=$(git rev-parse --short HEAD) \
-              -X ${LDFLAGS_PKG}.GitBranch=${GITHUB_REF_NAME} \
-              -X ${LDFLAGS_PKG}.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -o dist/windows-x64/git-flow-plus.exe \
-            ./cmd/git-flow-plus
-
-      - name: Build NSIS installer
-        shell: pwsh
-        run: |
-          $version = "${env:GITHUB_REF_NAME}" -replace '^v', ''
-          .\build\windows\create-installer.ps1 -Version $version -BinDir dist\windows-x64 -OutDir dist\installer
-
-      - name: Checksum installer
-        shell: bash
-        run: |
-          cd dist/installer
-          sha256sum *.exe > windows-checksums.txt
-          cat windows-checksums.txt
-
-      - name: Upload to the GitHub Release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/installer/*.exe dist/installer/windows-checksums.txt
+          subject-path: "dist/*.tar.gz,dist/*.zip,dist/*.deb,dist/*.rpm,dist/*.sbom.json,dist/installer/*.exe"
 
   macos-pkg:
     needs: goreleaser
