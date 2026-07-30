@@ -1,10 +1,19 @@
 name: Release
 
-# Triggered by pushing a tag like "v1.2.0". Runs the full test suite and
-# linter (so a bad release can't slip through even if CI was skipped for
-# some reason), cross-compiles all six supported platforms, packages them
-# into per-platform archives, and attaches those archives to a GitHub
-# Release for the pushed tag.
+# Triggered by pushing a tag like "v5.3.4.1.2". Three jobs:
+#   goreleaser        (ubuntu)  tests, lints, cross-compiles all 6
+#                                platforms via GoReleaser, packages
+#                                archives + checksums + .deb/.rpm,
+#                                creates the GitHub Release itself.
+#   windows-installer  (windows) builds the Inno Setup .exe (+ optional
+#                                WiX .msi) and uploads them to the
+#                                release the goreleaser job just created.
+#   macos-pkg           (macos)  builds a universal .pkg and uploads it
+#                                the same way.
+# windows-installer/macos-pkg can't run inside GoReleaser itself — Inno
+# Setup and pkgbuild/productbuild only exist on their native OS — so
+# they run as separate jobs gated on the release already existing. See
+# Packaging.md and ReleaseProcess.md for the full writeup.
 on:
   push:
     tags:
@@ -14,12 +23,12 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  goreleaser:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history, so `git describe` resolves correctly
+          fetch-depth: 0 # full history, so GoReleaser's changelog resolves correctly
 
       - uses: actions/setup-go@v5
         with:
@@ -32,17 +41,151 @@ jobs:
         with:
           version: latest
 
-      - name: Build release binaries
-        env:
-          VERSION: ${{ github.ref_name }}
-          BUILD_NUMBER: ${{ github.run_number }}
-        run: ./scripts/build.sh
-
-      - name: Package archives
-        run: ./scripts/package.sh
-
-      - name: Attach archives to the GitHub Release
-        uses: softprops/action-gh-release@v2
+      - uses: goreleaser/goreleaser-action@v6
         with:
-          files: dist/archives/*
-          generate_release_notes: true
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_NUMBER: ${{ github.run_number }}
+
+  windows-installer:
+    needs: goreleaser
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Compute version strings
+        id: ver
+        shell: bash
+        run: |
+          # Same derivation GoReleaser uses: strip the leading "v" from
+          # the pushed tag (v5.3.4.1.2 -> 5.3.4.1.2), so the installer's
+          # version matches the binaries goreleaser just built exactly.
+          full="${GITHUB_REF_NAME#v}"
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          # Win32 VERSIONINFO/MSI ProductVersion are 4 numeric fields;
+          # Git Flow Plus's own version has 5 (Sprint.Feature.ReleaseFix.
+          # DevOps.QA) — drop the trailing QA-build digit. See
+          # Packaging.md.
+          echo "file=${full%.*}" >> "$GITHUB_OUTPUT"
+
+      - name: Build windows/amd64 and windows/arm64 binaries
+        shell: bash
+        env:
+          LDFLAGS_PKG: github.com/tabnaeem/git-flow-plus/internal/cli
+          FULL_VERSION: ${{ steps.ver.outputs.full }}
+        run: |
+          set -euo pipefail
+          LDFLAGS="-s -w \
+            -X ${LDFLAGS_PKG}.Version=${FULL_VERSION} \
+            -X ${LDFLAGS_PKG}.BuildNumber=${{ github.run_number }} \
+            -X ${LDFLAGS_PKG}.GitCommit=$(git rev-parse --short HEAD) \
+            -X ${LDFLAGS_PKG}.GitBranch=${GITHUB_REF_NAME} \
+            -X ${LDFLAGS_PKG}.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          for arch in amd64 arm64; do
+            mkdir -p "dist/windows-$([ "$arch" = amd64 ] && echo x64 || echo arm64)"
+            GOOS=windows GOARCH=$arch CGO_ENABLED=0 go build -trimpath \
+              -ldflags "$LDFLAGS" \
+              -o "dist/windows-$([ "$arch" = amd64 ] && echo x64 || echo arm64)/git-flow-plus.exe" \
+              ./cmd/git-flow-plus
+          done
+
+      - name: Compile Inno Setup installers (x64, arm64)
+        shell: pwsh
+        run: |
+          $iscc = "ISCC.exe"
+          if (-not (Get-Command $iscc -ErrorAction SilentlyContinue)) {
+            choco install -y innosetup --no-progress
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          }
+          foreach ($arch in @("x64", "arm64")) {
+            & $iscc "/DMyAppVersion=${{ steps.ver.outputs.full }}" "/DMyAppArch=$arch" installer\windows\gitflowplus.iss
+            if ($LASTEXITCODE -ne 0) { throw "ISCC failed for $arch" }
+          }
+
+      - name: Install WiX v6 (optional MSI)
+        shell: bash
+        run: dotnet tool install --global wix --version 6.0.1
+
+      - name: Build WiX MSI installers (x64, arm64)
+        shell: bash
+        working-directory: installer/windows
+        run: |
+          set -euo pipefail
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          for arch in x64 arm64; do
+            wix build gitflowplus.wxs -arch "$arch" \
+              -d MsiVersion="${{ steps.ver.outputs.file }}" \
+              -d BinDir="../../dist/windows-$arch" \
+              -o "../../dist/installer/git-flow-plus-${{ steps.ver.outputs.full }}-windows-$arch.msi"
+          done
+
+      - name: Checksum all Windows artifacts
+        shell: bash
+        run: |
+          cd dist/installer
+          sha256sum *.exe *.msi > windows-checksums.txt
+          cat windows-checksums.txt
+
+      - name: Upload to the GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/installer/*.exe dist/installer/*.msi dist/installer/windows-checksums.txt --clobber
+
+  macos-pkg:
+    needs: goreleaser
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Compute version string
+        id: ver
+        run: echo "full=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build darwin/amd64 and darwin/arm64 binaries
+        env:
+          LDFLAGS_PKG: github.com/tabnaeem/git-flow-plus/internal/cli
+          FULL_VERSION: ${{ steps.ver.outputs.full }}
+        run: |
+          set -euo pipefail
+          LDFLAGS="-s -w \
+            -X ${LDFLAGS_PKG}.Version=${FULL_VERSION} \
+            -X ${LDFLAGS_PKG}.BuildNumber=${{ github.run_number }} \
+            -X ${LDFLAGS_PKG}.GitCommit=$(git rev-parse --short HEAD) \
+            -X ${LDFLAGS_PKG}.GitBranch=${GITHUB_REF_NAME} \
+            -X ${LDFLAGS_PKG}.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          for arch in amd64 arm64; do
+            mkdir -p "dist/macos-$arch"
+            GOOS=darwin GOARCH=$arch CGO_ENABLED=0 go build -trimpath \
+              -ldflags "$LDFLAGS" -o "dist/macos-$arch/git-flow-plus" ./cmd/git-flow-plus
+          done
+
+      - name: Build universal .pkg
+        run: |
+          ./scripts/package-macos-pkg.sh \
+            "${{ steps.ver.outputs.full }}" \
+            dist/macos-amd64/git-flow-plus \
+            dist/macos-arm64/git-flow-plus \
+            "dist/installer/git-flow-plus-${{ steps.ver.outputs.full }}-macos-universal.pkg"
+
+      - name: Checksum
+        run: |
+          cd dist/installer
+          shasum -a 256 *.pkg > macos-checksums.txt
+          cat macos-checksums.txt
+
+      - name: Upload to the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/installer/*.pkg dist/installer/macos-checksums.txt --clobber

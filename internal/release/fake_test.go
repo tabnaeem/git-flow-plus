@@ -3,12 +3,12 @@ package release_test
 import (
 	"context"
 
-	"github.com/hulhub/git-flow-plus/internal/config"
-	"github.com/hulhub/git-flow-plus/internal/feature"
-	gitpkg "github.com/hulhub/git-flow-plus/internal/git"
-	"github.com/hulhub/git-flow-plus/internal/gitflow"
-	"github.com/hulhub/git-flow-plus/internal/release"
-	"github.com/hulhub/git-flow-plus/internal/version"
+	"github.com/tabnaeem/git-flow-plus/internal/config"
+	"github.com/tabnaeem/git-flow-plus/internal/feature"
+	gitpkg "github.com/tabnaeem/git-flow-plus/internal/git"
+	"github.com/tabnaeem/git-flow-plus/internal/gitflow"
+	"github.com/tabnaeem/git-flow-plus/internal/release"
+	"github.com/tabnaeem/git-flow-plus/internal/version"
 )
 
 // fakeGit is a minimal git.Client test double. Only the methods
@@ -135,6 +135,9 @@ func (f *fakeGit) ListBranches(_ context.Context, pattern string) ([]string, err
 	}
 	return nil, nil
 }
+
+func (f *fakeGit) Version(context.Context) (string, error) { return "git version 2.43.0", nil }
+func (f *fakeGit) Writable(context.Context) (bool, error)  { return true, nil }
 
 // fakeGitFlow is a minimal gitflow.Service test double. Only the methods
 // release.Service calls have configurable hooks.

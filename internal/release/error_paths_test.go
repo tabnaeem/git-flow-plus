@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hulhub/git-flow-plus/internal/feature"
-	gitpkg "github.com/hulhub/git-flow-plus/internal/git"
-	"github.com/hulhub/git-flow-plus/internal/gitflow"
-	"github.com/hulhub/git-flow-plus/internal/release"
-	"github.com/hulhub/git-flow-plus/internal/version"
+	"github.com/tabnaeem/git-flow-plus/internal/feature"
+	gitpkg "github.com/tabnaeem/git-flow-plus/internal/git"
+	"github.com/tabnaeem/git-flow-plus/internal/gitflow"
+	"github.com/tabnaeem/git-flow-plus/internal/release"
+	"github.com/tabnaeem/git-flow-plus/internal/version"
 )
 
 var errBoom = errors.New("boom")

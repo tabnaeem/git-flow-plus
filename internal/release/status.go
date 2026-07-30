@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hulhub/git-flow-plus/internal/version"
+	"github.com/tabnaeem/git-flow-plus/internal/version"
 )
 
 // Status reports the release active on the current branch (i.e. whichever

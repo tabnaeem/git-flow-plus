@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/hulhub/git-flow-plus/internal/config"
-	gitpkg "github.com/hulhub/git-flow-plus/internal/git"
-	"github.com/hulhub/git-flow-plus/internal/gitflow"
+	"github.com/tabnaeem/git-flow-plus/internal/config"
+	gitpkg "github.com/tabnaeem/git-flow-plus/internal/git"
+	"github.com/tabnaeem/git-flow-plus/internal/gitflow"
 )
 
 var errBoom = errors.New("boom")

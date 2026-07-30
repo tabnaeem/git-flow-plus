@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/hulhub/git-flow-plus/internal/config"
-	"github.com/hulhub/git-flow-plus/internal/git"
+	"github.com/tabnaeem/git-flow-plus/internal/config"
+	"github.com/tabnaeem/git-flow-plus/internal/git"
 )
 
 // Service implements the Git Flow branching model against a single

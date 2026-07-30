@@ -42,13 +42,22 @@ when.
   (`--verbose`/`--debug`/`--json-log`/`--no-color`) taking final
   precedence.
 - **`git flow version`** with build metadata embeddable via `-ldflags`.
-- **Cross-platform release pipeline**: `scripts/build.sh`/`build.ps1` and
-  `package.sh`/`package.ps1` producing Windows/Linux/macOS ×
-  amd64/arm64 binaries and zip/tar.gz archives; a `Makefile` for the
-  common developer workflows; `.github/workflows/ci.yml` (build/vet/test
-  matrix, race detector, gofmt, lint) and `release.yml` (cross-compile,
-  package, attach to GitHub Releases on a `v*` tag push). See
-  [BuildGuide.md](BuildGuide.md).
+- **Cross-platform release pipeline**: GoReleaser (`.goreleaser.yaml`)
+  cross-compiles Windows/Linux/macOS × amd64/arm64, archives (zip for
+  Windows, tar.gz elsewhere), checksums, and packages `.deb`/`.rpm` for
+  Linux, from one declarative config instead of parallel bash/PowerShell
+  scripts; a `Makefile` for the common developer workflows;
+  `.github/workflows/ci.yml` (build/vet/test matrix, race detector,
+  gofmt, lint) and `release.yml` (test, lint, `goreleaser release`, plus
+  dedicated Windows-installer and macOS-`.pkg` jobs, all attached to a
+  GitHub Release on a `v*` tag push). See [Building.md](Building.md).
+- **Windows installer** (Inno Setup, optional WiX MSI), Linux
+  `.deb`/`.rpm` (via GoReleaser's `nfpm` integration), and a macOS
+  `.pkg` — silent install/uninstall, PATH registration (including the
+  `git-flow` alias `git flow ...` needs to resolve as a Git subcommand),
+  upgrade/reinstall detection, and Git/Git Bash/PowerShell detection on
+  Windows. See [WindowsInstallation.md](WindowsInstallation.md) and
+  [Packaging.md](Packaging.md).
 
 ## Deliberately out of scope (for now)
 
@@ -82,19 +91,19 @@ Roughly in the order they'd likely be tackled, none currently scheduled:
    which would require `release.json` to stop being a single file keyed
    implicitly by "whatever's on staging" and instead support multiple
    named manifests.
-2. **Package-manager installers**: Homebrew, Chocolatey, Scoop, `.deb`,
-   `.rpm`, and an MSI, so installing is a one-line command rather than
-   downloading and extracting an archive (see
-   [InstallationGuide.md](InstallationGuide.md#future-packaging-not-yet-available)).
+2. **Package-manager installers**: Homebrew, Chocolatey, and Scoop, so
+   installing is a one-line command rather than downloading an archive
+   or running an installer — `.deb`, `.rpm`, and an optional Windows MSI
+   are already implemented (see [Packaging.md](Packaging.md)).
 3. **Follow-up-commit notification**: some way to surface "this
    already-merged feature branch has new commits" (e.g. as part of
    `release feature status` or `doctor`) so a Release Manager doesn't have
    to rely purely on their own QA process to know a re-run of `release
    feature add` is needed.
-4. **Code signing**: the release archives are unsigned, so macOS
-   Gatekeeper and Windows SmartScreen may warn on first run (see
-   [InstallationGuide.md](InstallationGuide.md)) — signing/notarization
-   would remove that friction.
+4. **Code signing**: the release archives and installers are unsigned,
+   so macOS Gatekeeper and Windows SmartScreen may warn on first run
+   (see [Packaging.md](Packaging.md#unsigned-artifacts)) — signing/
+   notarization would remove that friction.
 
 ## How to propose a change
 

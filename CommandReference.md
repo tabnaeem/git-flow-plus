@@ -307,9 +307,14 @@ git flow release manifest
 
 ## `git flow doctor`
 
-Health checks: git binary present, valid repository, `main`/`staging`/
-`develop` branches present, working tree clean, `.gitflowplus/config.json`
-present. Exits non-zero if any check fails.
+Colorized health checks, in order: git binary present, git version,
+valid repository, `main`/`staging`/`develop` branches present, working
+tree state, repository directory writable, `.gitflowplus/config.json`
+present, Git Flow Plus's own build version, whether `git-flow` resolves
+on `PATH` (required for `git flow ...` to work as a Git subcommand), and
+whether a release is currently in progress. Exits non-zero if any
+non-informational check fails — see
+[Troubleshooting.md](Troubleshooting.md) for what to do about each one.
 
 ```bash
 git flow doctor
@@ -336,7 +341,7 @@ git flow config path
 
 Prints Version, Build Number, Git Commit, Git Branch, Build Date, Go
 Version, OS, and Architecture. The first five are embedded at build time
-via `-ldflags` (see [BuildGuide.md](BuildGuide.md)); an unstamped `go
+via `-ldflags` (see [Building.md](Building.md)); an unstamped `go
 build` shows `"dev"`/`"unknown"` defaults instead.
 
 ```bash

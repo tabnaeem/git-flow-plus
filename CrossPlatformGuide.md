@@ -14,7 +14,7 @@ differences actually mattered during development.
 | macOS | Intel (amd64), Apple Silicon (arm64) |
 
 All six are built and tested for on every CI run (see
-[BuildGuide.md](BuildGuide.md)) and cross-compile cleanly from any host —
+[Building.md](Building.md)) and cross-compile cleanly from any host —
 Go's toolchain needs no per-target C compiler because Git Flow Plus builds
 with `CGO_ENABLED=0`.
 
@@ -94,7 +94,7 @@ real temporary repositories rather than mocking them (see
 [DeveloperGuide.md](DeveloperGuide.md#testing-style)), so it exercises the
 path-handling and process-invocation code on whichever OS it runs on. CI
 runs this matrix on Linux, macOS, and Windows on every push (see
-[BuildGuide.md](BuildGuide.md#cicd)) — a change that only works on one
+[Building.md](Building.md#cicd)) — a change that only works on one
 platform fails there before it fails for a user.
 
 The race detector (`go test ./... -race`) requires cgo, which isn't always

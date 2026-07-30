@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hulhub/git-flow-plus/internal/config"
+	"github.com/tabnaeem/git-flow-plus/internal/config"
 )
 
 func TestDefault(t *testing.T) {

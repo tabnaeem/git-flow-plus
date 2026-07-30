@@ -3,7 +3,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/hulhub/git-flow-plus/internal/gitflow"
+	"github.com/tabnaeem/git-flow-plus/internal/gitflow"
 )
 
 func newHotfixCmd(app *App) *cobra.Command {

@@ -7,8 +7,8 @@ import (
 	"path"
 	"path/filepath"
 
-	"github.com/hulhub/git-flow-plus/internal/config"
-	"github.com/hulhub/git-flow-plus/internal/version"
+	"github.com/tabnaeem/git-flow-plus/internal/config"
+	"github.com/tabnaeem/git-flow-plus/internal/version"
 )
 
 // FileName is the name of the manifest file inside the Git Flow Plus

@@ -12,14 +12,14 @@ import (
 
 	"log/slog"
 
-	"github.com/hulhub/git-flow-plus/internal/config"
-	"github.com/hulhub/git-flow-plus/internal/feature"
-	"github.com/hulhub/git-flow-plus/internal/git"
-	"github.com/hulhub/git-flow-plus/internal/gitflow"
-	"github.com/hulhub/git-flow-plus/internal/hooks"
-	"github.com/hulhub/git-flow-plus/internal/logging"
-	"github.com/hulhub/git-flow-plus/internal/release"
-	"github.com/hulhub/git-flow-plus/internal/version"
+	"github.com/tabnaeem/git-flow-plus/internal/config"
+	"github.com/tabnaeem/git-flow-plus/internal/feature"
+	"github.com/tabnaeem/git-flow-plus/internal/git"
+	"github.com/tabnaeem/git-flow-plus/internal/gitflow"
+	"github.com/tabnaeem/git-flow-plus/internal/hooks"
+	"github.com/tabnaeem/git-flow-plus/internal/logging"
+	"github.com/tabnaeem/git-flow-plus/internal/release"
+	"github.com/tabnaeem/git-flow-plus/internal/version"
 )
 
 // App bundles the dependencies shared by every CLI command. It is
@@ -44,6 +44,12 @@ type App struct {
 	// injected so tests can substitute a fake instead of touching the
 	// filesystem/OS process table.
 	Hooks hooks.Runner
+	// ColorEnabled reports whether commands that print directly to Out
+	// (e.g. `git flow doctor`) should use ANSI color. Resolved once in
+	// the root command's PersistentPreRunE from config.json's
+	// logging.color, --no-color, NO_COLOR, and whether Out is a real
+	// terminal; false until then.
+	ColorEnabled bool
 }
 
 // NewApp constructs an App wired to real OS dependencies (stdout, stderr,

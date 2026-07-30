@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Git Flow Plus — WiX MSI installer (optional; the primary installer is
+  installer/windows/gitflowplus.iss). See Packaging.md for why both
+  exist: this one targets enterprise deployment via Group Policy/SCCM/
+  Intune, which wants a genuine MSI and generally pushes it per-machine
+  to unattended targets — so, deliberately, this installer:
+    - is per-machine only (no per-user mode; the Inno .exe covers that)
+    - does not prompt or detect Git/Git Bash/PowerShell interactively
+      (meaningless for an unattended GPO push — IT already vetted the
+      target machines)
+    - seeds the default config under ProgramData (C:\ProgramData\
+      GitFlowPlus), not a specific user's %APPDATA%, since a per-machine
+      install has no single "current user" to scope a roaming profile to
+
+  Build (from repo root), after staging a flat directory containing
+  git-flow-plus.exe for the target architecture (same staging step the
+  .iss uses — see Packaging.md). Requires the WiX v6 CLI as a dotnet
+  global tool (see Building.md for the install command) — not v7, which
+  gates its CLI behind a paid Open Source Maintenance Fee EULA; see
+  https://wixtoolset.org/osmf/.
+    wix build installer\windows\gitflowplus.wxs ^
+      -arch x64 ^
+      -d MsiVersion=5.3.4.1 -d BinDir=dist\windows-x64 ^
+      -o dist\installer\git-flow-plus-5.3.4.1.2-windows-x64.msi
+
+  MsiVersion is the same 4-field truncation the .iss uses for
+  VersionInfoVersion (MSI's ProductVersion is conventionally 3 fields,
+  and only the first 3 participate in upgrade comparisons — a 4th is
+  accepted but ignored, so this reuses the .iss's already-truncated
+  value rather than truncating twice two different ways).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <?ifndef MsiVersion?>
+    <?define MsiVersion = "0.0.0.0"?>
+  <?endif?>
+  <?ifndef BinDir?>
+    <?define BinDir = "..\..\dist\windows-x64"?>
+  <?endif?>
+
+  <Package Name="Git Flow Plus"
+           Manufacturer="Git Flow Plus Contributors"
+           Version="$(MsiVersion)"
+           UpgradeCode="C1DB7562-C433-499A-991D-99A47E718720"
+           Scope="perMachine"
+           Compressed="yes">
+
+    <SummaryInformation Manufacturer="Git Flow Plus Contributors"
+                         Description="Git Flow Plus - Git Flow with enterprise release management" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Git Flow Plus is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="GitFlowPlus">
+        <Component Id="MainExecutable" Guid="*" Bitness="always64">
+          <File Id="GitFlowPlusExe" Source="$(BinDir)\git-flow-plus.exe" KeyPath="yes" />
+        </Component>
+
+        <!-- Literal filename "git-flow.exe" is what Git itself looks
+             for on PATH to resolve `git flow ...` as a subcommand; see
+             internal/cli/doctor.go's PATH check and CommandReference.md. -->
+        <Component Id="AltExecutable" Guid="*" Bitness="always64">
+          <File Id="GitFlowExe" Source="$(BinDir)\git-flow-plus.exe" Name="git-flow.exe" KeyPath="yes" />
+        </Component>
+
+        <Component Id="ReadmeFile" Guid="*" Bitness="always64">
+          <File Id="ReadmeMd" Source="..\..\README.md" KeyPath="yes" />
+        </Component>
+
+        <Component Id="LicenseFile" Guid="*" Bitness="always64">
+          <File Id="LicenseTxt" Source="..\..\LICENSE" KeyPath="yes" />
+        </Component>
+
+        <!-- Environment is WiX's native, MSI-managed equivalent of the
+             .iss's hand-rolled EnvAddPath/EnvRemovePath: it appends
+             INSTALLFOLDER to the machine PATH on install and precisely
+             removes just that entry on uninstall, without touching the
+             rest of the value. (Part of the core wxs schema since WiX
+             v4 — no util: extension prefix needed, unlike WiX v3.) -->
+        <Component Id="EnvPath" Guid="*" Bitness="always64">
+          <Environment Id="AddInstallDirToPath" Name="PATH" Value="[INSTALLFOLDER]"
+                       Permanent="no" Part="last" Action="set" System="yes" />
+          <RegistryValue Root="HKLM" Key="Software\GitFlowPlus" Name="PathAdded" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Per-machine install: no single "current user" to seed a roaming
+         profile for, so this seeds ProgramData instead of %APPDATA% —
+         see the file header. -->
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="APPCONFIGDIR" Name="GitFlowPlus">
+        <!-- Permanent="yes": survives uninstall, matching the .iss
+             installer's behavior of never deleting a user's config on
+             uninstall. Modern WiX dropped the old NeverOverwrite file
+             attribute, so — unlike the .iss, which explicitly skips
+             writing if the file already exists — a version *upgrade*
+             here follows ordinary MSI file-versioning rules rather than
+             an unconditional "leave it alone"; see Packaging.md for
+             this documented (minor) difference between the two
+             installers. Mirrors internal/config.Default()'s exact JSON
+             shape — a real, valid config, not a placeholder; see
+             WindowsInstallation.md for what Git Flow Plus itself
+             currently reads (repo-local .gitflowplus/config.json only —
+             this seeded copy is not yet consumed by the CLI). -->
+        <Component Id="DefaultConfig" Guid="*" Bitness="always64" Permanent="yes">
+          <File Id="DefaultConfigJson" Source="default-config.json" Name="config.json" KeyPath="yes" />
+        </Component>
+
+        <Directory Id="APPLOGSDIR" Name="logs">
+          <!-- Reserved for future file-based diagnostic logging — Git
+               Flow Plus does not yet write here; see
+               Troubleshooting.md. -->
+          <Component Id="LogsDir" Guid="*" Bitness="always64" Permanent="yes">
+            <CreateFolder />
+            <RegistryValue Root="HKLM" Key="Software\GitFlowPlus" Name="LogsDirCreated" Type="integer" Value="1" KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="Git Flow Plus" Level="1">
+      <ComponentRef Id="MainExecutable" />
+      <ComponentRef Id="AltExecutable" />
+      <ComponentRef Id="ReadmeFile" />
+      <ComponentRef Id="LicenseFile" />
+      <ComponentRef Id="EnvPath" />
+      <ComponentRef Id="DefaultConfig" />
+      <ComponentRef Id="LogsDir" />
+    </Feature>
+  </Package>
+</Wix>

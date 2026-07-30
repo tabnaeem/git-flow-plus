@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hulhub/git-flow-plus/internal/config"
-	gitpkg "github.com/hulhub/git-flow-plus/internal/git"
-	"github.com/hulhub/git-flow-plus/internal/gitflow"
+	"github.com/tabnaeem/git-flow-plus/internal/config"
+	gitpkg "github.com/tabnaeem/git-flow-plus/internal/git"
+	"github.com/tabnaeem/git-flow-plus/internal/gitflow"
 )
 
 func discardLogger() *slog.Logger {
@@ -570,6 +570,41 @@ func TestDoctorHealthyRepo(t *testing.T) {
 	}
 	if len(report.Checks) == 0 {
 		t.Fatal("Doctor() returned no checks")
+	}
+	for _, name := range []string{"git version", "permissions"} {
+		found := false
+		for _, c := range report.Checks {
+			if c.Name == name {
+				found = true
+				if !c.OK {
+					t.Errorf("%q check OK = false, want true; detail = %q", name, c.Detail)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("Doctor() did not include a %q check", name)
+		}
+	}
+}
+
+func TestDoctorReportsUnwritableRepo(t *testing.T) {
+	svc := gitflow.NewService(&fakeClient{writable: func() (bool, error) { return false, nil }}, config.Default(), discardLogger())
+
+	report := svc.Doctor(context.Background())
+	if report.Healthy() {
+		t.Error("Doctor().Healthy() = true with an unwritable repository directory, want false")
+	}
+	found := false
+	for _, c := range report.Checks {
+		if c.Name == "permissions" {
+			found = true
+			if c.OK {
+				t.Error("'permissions' check OK = true, want false")
+			}
+		}
+	}
+	if !found {
+		t.Error("Doctor() did not include a 'permissions' check")
 	}
 }
 

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hulhub/git-flow-plus/internal/hooks"
+	"github.com/tabnaeem/git-flow-plus/internal/hooks"
 )
 
 // writeHook writes a hook script appropriate for the current OS (.bat on

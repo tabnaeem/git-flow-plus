@@ -7,12 +7,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hulhub/git-flow-plus/internal/config"
-	"github.com/hulhub/git-flow-plus/internal/logging"
+	"github.com/tabnaeem/git-flow-plus/internal/config"
+	"github.com/tabnaeem/git-flow-plus/internal/logging"
 )
 
 // Version is the CLI version string. It is overridden at build time via
-// -ldflags "-X github.com/hulhub/git-flow-plus/internal/cli.Version=...".
+// -ldflags "-X github.com/tabnaeem/git-flow-plus/internal/cli.Version=...".
 var Version = "0.1.0-dev"
 
 type rootFlags struct {
@@ -50,7 +50,13 @@ func NewRootCmd(app *App) *cobra.Command {
 				app.RepoPath = abs
 			}
 
-			app.Logger = buildLogger(app, flags, cmd)
+			logger, loggingCfg := buildLogger(app, flags, cmd)
+			app.Logger = logger
+			// Resolved independently of the logger's color (which targets
+			// Err): doctor and similar commands print human-readable
+			// output straight to Out, regardless of --json-log, so their
+			// color needs its own terminal check against that writer.
+			app.ColorEnabled = resolveColor(app.Out, loggingCfg.Color, flags.noColor)
 			return nil
 		},
 	}
@@ -85,7 +91,7 @@ func NewRootCmd(app *App) *cobra.Command {
 // broken config.json shouldn't prevent even seeing the error that
 // describes it, so this falls back to development defaults and lets the
 // command's own app.LoadConfig() call surface the real failure normally.
-func buildLogger(app *App, flags *rootFlags, cmd *cobra.Command) *slog.Logger {
+func buildLogger(app *App, flags *rootFlags, cmd *cobra.Command) (*slog.Logger, config.Logging) {
 	loggingCfg := config.DefaultLogging(config.EnvDevelopment)
 	if cfg, err := app.LoadConfig(); err == nil {
 		loggingCfg = cfg.Logging
@@ -120,7 +126,7 @@ func buildLogger(app *App, flags *rootFlags, cmd *cobra.Command) *slog.Logger {
 		Level:  &level,
 		Format: format,
 		Color:  color,
-	})
+	}), loggingCfg
 }
 
 // Execute runs the Git Flow Plus CLI with real OS dependencies and returns

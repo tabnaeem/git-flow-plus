@@ -8,13 +8,17 @@
 #   make vet       run go vet
 #   make check     fmt + vet + lint + test (what CI runs)
 #   make dist      cross-compile release binaries into dist/ (6 platforms)
-#   make package   dist, then package dist/ into dist/archives/ (zip/tar.gz)
+#   make package   dist, plus archives/checksums/.deb/.rpm into dist/
 #   make clean     remove bin/ and dist/
 #
-# On Windows without a `make` on PATH, use scripts\build.ps1 and
-# scripts\package.ps1 directly instead — see DeveloperGuide.md.
+# dist/package require GoReleaser (https://goreleaser.com) on PATH — see
+# Building.md. They run it in --snapshot mode: a full local dry run (same
+# cross-compile, archiving, checksums, and Linux packaging CI performs on a
+# real tag) that never touches Git tags or publishes anything. This one
+# tool works identically on Windows, Linux, and macOS, so there's no
+# separate Windows script to reach for.
 
-CLI_PKG := github.com/hulhub/git-flow-plus/internal/cli
+CLI_PKG := github.com/tabnaeem/git-flow-plus/internal/cli
 CMD_PKG := ./cmd/git-flow-plus
 
 VERSION      ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
@@ -53,10 +57,10 @@ vet:
 check: fmt vet lint test
 
 dist:
-	./scripts/build.sh
+	goreleaser build --snapshot --clean
 
-package: dist
-	./scripts/package.sh
+package:
+	goreleaser release --snapshot --clean
 
 clean:
 	rm -rf bin dist

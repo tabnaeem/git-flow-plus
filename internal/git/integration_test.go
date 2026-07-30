@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	gitpkg "github.com/hulhub/git-flow-plus/internal/git"
+	gitpkg "github.com/tabnaeem/git-flow-plus/internal/git"
 )
 
 // newRealRepo initializes a real Git repository (via the actual git binary)

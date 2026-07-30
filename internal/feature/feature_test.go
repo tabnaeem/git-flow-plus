@@ -3,7 +3,7 @@ package feature_test
 import (
 	"testing"
 
-	"github.com/hulhub/git-flow-plus/internal/feature"
+	"github.com/tabnaeem/git-flow-plus/internal/feature"
 )
 
 func TestNewIsEmpty(t *testing.T) {

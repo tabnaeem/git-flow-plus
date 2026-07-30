@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -73,6 +74,17 @@ type Client interface {
 	// ListBranches returns the local branch names matching pattern (a glob
 	// understood by `git for-each-ref`, e.g. "release/*").
 	ListBranches(ctx context.Context, pattern string) ([]string, error)
+	// Version returns the trimmed output of `git --version` (e.g.
+	// "git version 2.43.0.windows.1"). Used by `git flow doctor` to report
+	// the installed Git version, distinct from git.Available()'s bare
+	// present/absent check.
+	Version(ctx context.Context) (string, error)
+	// Writable reports whether Dir can be written to, by attempting to
+	// create and immediately remove a temporary file in it. Used by
+	// `git flow doctor`'s permissions check; a false result (rather than
+	// an error) means the check ran fine but the directory isn't
+	// writable — a genuine os error is still returned as err.
+	Writable(ctx context.Context) (bool, error)
 }
 
 type client struct {
@@ -233,4 +245,24 @@ func (c *client) ListBranches(ctx context.Context, pattern string) ([]string, er
 		return nil, nil
 	}
 	return strings.Split(out, "\n"), nil
+}
+
+func (c *client) Version(ctx context.Context) (string, error) {
+	return c.runner.Run(ctx, c.dir, "--version")
+}
+
+func (c *client) Writable(_ context.Context) (bool, error) {
+	// Any failure to create the probe file — permission denied, Dir
+	// missing, a read-only filesystem — means "not writable" for the
+	// caller's purposes; there's nothing actionable to distinguish, so
+	// this never returns a non-nil error in practice (the error return
+	// exists for interface symmetry with the rest of Client).
+	f, err := os.CreateTemp(c.dir, ".gfp-write-test-*")
+	if err != nil {
+		return false, nil
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+	return true, nil
 }

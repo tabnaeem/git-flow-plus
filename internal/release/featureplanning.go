@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hulhub/git-flow-plus/internal/feature"
+	"github.com/tabnaeem/git-flow-plus/internal/feature"
 )
 
 // Feature-planning operations all check out staging before touching

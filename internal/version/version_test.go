@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/hulhub/git-flow-plus/internal/version"
+	"github.com/tabnaeem/git-flow-plus/internal/version"
 )
 
 func TestNewIsSprintReleaseZeroZeroOne(t *testing.T) {

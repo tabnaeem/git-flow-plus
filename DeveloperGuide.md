@@ -9,7 +9,7 @@
   `.golangci.yml`) for linting, and GNU Make for the `Makefile` targets
   (Windows without `make` on `PATH` can use `scripts\build.ps1` /
   `scripts\package.ps1` directly instead — see
-  [BuildGuide.md](BuildGuide.md)).
+  [Building.md](Building.md)).
 
 ## Building
 
@@ -19,7 +19,7 @@ make build                                     # same, with version metadata via
 make dist                                      # cross-compile all 6 supported platforms into dist/
 ```
 
-See [BuildGuide.md](BuildGuide.md) for cross-compilation, packaging, and
+See [Building.md](Building.md) for cross-compilation, packaging, and
 the CI/CD release pipeline in full — this section is deliberately just the
 "how do I get a binary to run locally" quick reference.
 

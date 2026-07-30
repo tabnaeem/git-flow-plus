@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hulhub/git-flow-plus/internal/version"
+	"github.com/tabnaeem/git-flow-plus/internal/version"
 )
 
 // tagQABuild creates the annotated tag for a QA build at HEAD (the commit

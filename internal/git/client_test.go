@@ -3,9 +3,10 @@ package git_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
-	gitpkg "github.com/hulhub/git-flow-plus/internal/git"
+	gitpkg "github.com/tabnaeem/git-flow-plus/internal/git"
 )
 
 type call struct {
@@ -113,6 +114,9 @@ func TestClientArgConstruction(t *testing.T) {
 		{"CurrentBranch", func(t *testing.T, c gitpkg.Client) {
 			_, _ = c.CurrentBranch(context.Background())
 		}, []string{"rev-parse", "--abbrev-ref", "HEAD"}},
+		{"Version", func(t *testing.T, c gitpkg.Client) {
+			_, _ = c.Version(context.Background())
+		}, []string{"--version"}},
 	}
 
 	for _, tc := range cases {
@@ -236,6 +240,27 @@ func TestStatusCleanAndDirty(t *testing.T) {
 	}
 	if status.Clean {
 		t.Error("Status().Clean = true, want false for non-empty porcelain output")
+	}
+}
+
+func TestWritableTrueForWritableDir(t *testing.T) {
+	dir := t.TempDir()
+	writable, err := gitpkg.NewClient(&fakeRunner{}, dir).Writable(context.Background())
+	if err != nil {
+		t.Fatalf("Writable() error = %v", err)
+	}
+	if !writable {
+		t.Error("Writable() = false, want true for a fresh temp directory")
+	}
+}
+
+func TestWritableFalseForNonexistentDir(t *testing.T) {
+	writable, err := gitpkg.NewClient(&fakeRunner{}, filepath.Join(t.TempDir(), "does-not-exist")).Writable(context.Background())
+	if err != nil {
+		t.Fatalf("Writable() error = %v, want a false result rather than an error for a missing directory", err)
+	}
+	if writable {
+		t.Error("Writable() = true, want false for a directory that doesn't exist")
 	}
 }
 

@@ -2,13 +2,62 @@
 
 No version has been tagged yet — `git flow version` reports `0.1.0-dev`
 until the first `v*` tag is pushed (see
-[BuildGuide.md](BuildGuide.md#cicd)). This document tracks what's landed
+[Building.md](Building.md#cicd)). This document tracks what's landed
 so far, organized by milestone, so the first real release has an accurate
 starting changelog rather than a single undifferentiated diff.
 
 ## Unreleased
 
-### Feature Management architecture correction (this milestone)
+### Installation and distribution system (this milestone)
+
+A complete, professional install/release pipeline across all three
+platforms, first-priority Windows:
+
+- **Windows installer** (Inno Setup, `installer/windows/gitflowplus.iss`):
+  silent install/uninstall, per-user or machine-wide, automatic PATH
+  management (verified end-to-end against a real ~1,800-character PATH
+  with 40+ existing entries — installed, `doctor` all green, uninstalled,
+  PATH restored byte-for-byte), Git/Git Bash/PowerShell detection,
+  automatic detection-and-silent-removal of a prior install on upgrade,
+  and a seeded default configuration under `%APPDATA%`.
+- **Optional Windows MSI** (WiX v6, `installer/windows/gitflowplus.wxs`)
+  for Group Policy/SCCM/Intune deployment — per-machine, native
+  `MajorUpgrade` handling, MSI-table-level-verified PATH management.
+  Deliberately pinned to WiX v6, not v7, which gates its CLI behind a
+  paid Open Source Maintenance Fee EULA.
+- **Linux `.deb`/`.rpm`** via GoReleaser's `nfpm` integration, including
+  a `git-flow` symlink so `git flow ...` resolves as a Git subcommand.
+- **macOS `.pkg`** (`scripts/package-macos-pkg.sh`): a universal
+  (Intel + Apple Silicon) binary via `lipo`, with a `postinstall` script
+  seeding `~/Library/Application Support/GitFlowPlus`.
+- **GoReleaser adoption** (`.goreleaser.yaml`): replaced the hand-
+  maintained `scripts/build.sh`/`build.ps1` + `package.sh`/`package.ps1`
+  pair with one declarative config — cross-compilation, archives,
+  SHA256 checksums (previously missing entirely), and `.deb`/`.rpm` all
+  from a single source of truth.
+- **`git flow doctor` rewrite**: colorized output, plus new checks for
+  Git version, repository write permissions, `PATH` resolution (whether
+  `git flow ...` will actually work as a Git subcommand), Git Flow
+  Plus's own build version, and whether a release is in progress.
+- **`.github/workflows/release.yml` rewrite**: three coordinated jobs
+  (GoReleaser on Linux; the Windows installer/MSI; the macOS `.pkg`),
+  triggered by the same `v*` tag push as before, publishing everything
+  to one GitHub Release.
+- **LICENSE added** (MIT) — required for `.deb`/`.rpm` packaging
+  metadata and now-correct for public distribution generally.
+- **Module path corrected**: `go.mod` had declared
+  `github.com/hulhub/git-flow-plus`, but the actual repository is
+  `github.com/tabnaeem/git-flow-plus` — left uncorrected, this would
+  have broken `go install` and GoReleaser's own GitHub Release step.
+- **Docs**: new [Installation.md](Installation.md),
+  [WindowsInstallation.md](WindowsInstallation.md),
+  [Building.md](Building.md) (supersedes BuildGuide.md),
+  [ReleaseProcess.md](ReleaseProcess.md), [Packaging.md](Packaging.md),
+  [UpgradeGuide.md](UpgradeGuide.md), and
+  [Troubleshooting.md](Troubleshooting.md). `InstallationGuide.md` and
+  `BuildGuide.md` are now short pointers to their replacements.
+
+### Feature Management architecture correction
 
 `develop` is no longer part of the release lifecycle — it's a temporary
 integration branch for unit testing only. This is a breaking change to the
@@ -48,7 +97,7 @@ See
 [ReleaseManagement.md](ReleaseManagement.md#feature-management--release-planning)
 for the full model.
 
-### Production readiness (this milestone)
+### Production readiness
 
 - **Logging**: seven-level structured logging (Trace, Debug, Info,
   Success, Warn, Error, Fatal) via a new colorized, human-readable console

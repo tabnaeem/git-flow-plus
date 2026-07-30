@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/hulhub/git-flow-plus/internal/config"
-	"github.com/hulhub/git-flow-plus/internal/feature"
-	"github.com/hulhub/git-flow-plus/internal/git"
-	"github.com/hulhub/git-flow-plus/internal/gitflow"
-	"github.com/hulhub/git-flow-plus/internal/hooks"
-	"github.com/hulhub/git-flow-plus/internal/version"
+	"github.com/tabnaeem/git-flow-plus/internal/config"
+	"github.com/tabnaeem/git-flow-plus/internal/feature"
+	"github.com/tabnaeem/git-flow-plus/internal/git"
+	"github.com/tabnaeem/git-flow-plus/internal/gitflow"
+	"github.com/tabnaeem/git-flow-plus/internal/hooks"
+	"github.com/tabnaeem/git-flow-plus/internal/version"
 )
 
 // Dependencies are the collaborators Service composes: gitflow.Service for

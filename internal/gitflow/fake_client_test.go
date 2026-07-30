@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	gitpkg "github.com/hulhub/git-flow-plus/internal/git"
+	gitpkg "github.com/tabnaeem/git-flow-plus/internal/git"
 )
 
 // fakeClient is a git.Client test double whose methods default to a
@@ -34,6 +34,8 @@ type fakeClient struct {
 	tagCommit           func(name, commit, msg string) error
 	commitSHA           func() (string, error)
 	configValue         func(key string) (string, error)
+	version             func() (string, error)
+	writable            func() (bool, error)
 }
 
 // branchExistsFor returns true for "main"/"staging"/"develop" (so
@@ -199,6 +201,20 @@ func (f *fakeClient) ConfigValue(_ context.Context, key string) (string, error) 
 		return f.configValue(key)
 	}
 	return "", nil
+}
+
+func (f *fakeClient) Version(context.Context) (string, error) {
+	if f.version != nil {
+		return f.version()
+	}
+	return "git version 2.43.0", nil
+}
+
+func (f *fakeClient) Writable(context.Context) (bool, error) {
+	if f.writable != nil {
+		return f.writable()
+	}
+	return true, nil
 }
 
 // containsMsg reports whether err's message contains substr; used to assert

@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hulhub/git-flow-plus/internal/config"
+	"github.com/tabnaeem/git-flow-plus/internal/config"
 )
 
 func newConfigCmd(app *App) *cobra.Command {

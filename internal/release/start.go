@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hulhub/git-flow-plus/internal/version"
+	"github.com/tabnaeem/git-flow-plus/internal/version"
 )
 
 // StartRelease parses name as "Sprint.Release", checks out staging (Git

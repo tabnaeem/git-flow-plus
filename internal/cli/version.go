@@ -8,7 +8,7 @@ import (
 )
 
 // Build metadata, overridden at build time via
-// -ldflags "-X github.com/hulhub/git-flow-plus/internal/cli.<Var>=<value>"
+// -ldflags "-X github.com/tabnaeem/git-flow-plus/internal/cli.<Var>=<value>"
 // (see scripts/build.sh / scripts/build.ps1 / the Makefile). Defaults
 // describe an unstamped development build (e.g. `go build` run directly,
 // without going through the build scripts).

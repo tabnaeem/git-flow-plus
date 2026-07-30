@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hulhub/git-flow-plus/internal/logging"
+	"github.com/tabnaeem/git-flow-plus/internal/logging"
 )
 
 func TestNewTextFormatDefaultLevel(t *testing.T) {

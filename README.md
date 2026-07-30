@@ -21,9 +21,11 @@ GitKraken, and any Git-aware IDE or CI/CD system.
 
 ## Installing
 
-Download a prebuilt binary for your platform from GitHub Releases, or build
-from source — see [InstallationGuide.md](InstallationGuide.md). Quick
-version:
+Windows: download the installer (`.exe`, or an optional `.msi` for
+GPO/SCCM/Intune deployment). Linux: `.deb`/`.rpm`. macOS: `.pkg`. All
+from [GitHub Releases](https://github.com/tabnaeem/git-flow-plus/releases) —
+see [Installation.md](Installation.md) for platform-specific steps, or
+build from source:
 
 ```bash
 go build -o bin/git-flow ./cmd/git-flow-plus
@@ -68,10 +70,18 @@ environment variables — see
   syntax, and what it does.
 - **[DeveloperGuide.md](DeveloperGuide.md)** — building, testing, and
   extending the codebase.
-- **[InstallationGuide.md](InstallationGuide.md)** — installing a release
-  binary or building from source.
-- **[BuildGuide.md](BuildGuide.md)** — cross-compiling, packaging, version
-  metadata, and the CI/CD release pipeline.
+- **[Installation.md](Installation.md)** — installing on Windows, Linux,
+  or macOS, from an installer/package, an archive, or source.
+- **[WindowsInstallation.md](WindowsInstallation.md)** — the Windows
+  `.exe`/`.msi` installers in full: silent install/uninstall, per-user vs.
+  machine-wide, PATH, and IDE/terminal integration.
+- **[Building.md](Building.md)** — cross-compiling and version metadata.
+- **[Packaging.md](Packaging.md)** — how every installer/package is built.
+- **[ReleaseProcess.md](ReleaseProcess.md)** — cutting and publishing a release.
+- **[UpgradeGuide.md](UpgradeGuide.md)** — upgrading or uninstalling an
+  existing install.
+- **[Troubleshooting.md](Troubleshooting.md)** — PATH issues, SmartScreen/
+  Gatekeeper warnings, and more.
 - **[CrossPlatformGuide.md](CrossPlatformGuide.md)** — supported platforms
   and the handful of places platform differences actually matter.
 - **[Roadmap.md](Roadmap.md)** — what's implemented, what's deliberately

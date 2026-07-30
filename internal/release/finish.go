@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hulhub/git-flow-plus/internal/feature"
+	"github.com/tabnaeem/git-flow-plus/internal/feature"
 )
 
 // FinishRelease is the Production Release step. It requires every merged

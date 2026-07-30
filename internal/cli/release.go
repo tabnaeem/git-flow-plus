@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hulhub/git-flow-plus/internal/release"
+	"github.com/tabnaeem/git-flow-plus/internal/release"
 )
 
 func newReleaseCmd(app *App) *cobra.Command {

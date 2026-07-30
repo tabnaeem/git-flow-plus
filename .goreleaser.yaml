@@ -1,0 +1,115 @@
+# GoReleaser config for Git Flow Plus — see Building.md and
+# ReleaseProcess.md. Replaces the formerly hand-maintained
+# scripts/build.{sh,ps1} + scripts/package.{sh,ps1} pair (same
+# cross-compile/archive/checksum logic, written twice, once per shell —
+# this is the single source of truth instead).
+#
+# Local dry run (no tag, no publish, no GitHub token required):
+#   goreleaser release --snapshot --clean
+# (or `make package`, which calls exactly that)
+#
+# CI (.github/workflows/release.yml) runs `goreleaser release --clean` on
+# every "v*" tag push, which additionally publishes the GitHub Release.
+# The Windows installer and macOS .pkg are NOT built here — nfpm (below)
+# only knows how to produce Linux packages. Those two are built in their
+# own CI jobs (windows-latest / macos-latest, since Inno Setup and
+# pkgbuild only run on their native OS) and uploaded to the release
+# GoReleaser creates via `gh release upload`, once it exists.
+version: 2
+
+project_name: git-flow-plus
+
+builds:
+  - id: git-flow-plus
+    main: ./cmd/git-flow-plus
+    binary: git-flow-plus
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/tabnaeem/git-flow-plus/internal/cli.Version={{ .Version }}
+      - -X github.com/tabnaeem/git-flow-plus/internal/cli.BuildNumber={{ if index .Env "BUILD_NUMBER" }}{{ index .Env "BUILD_NUMBER" }}{{ else }}dev{{ end }}
+      - -X github.com/tabnaeem/git-flow-plus/internal/cli.GitCommit={{ .ShortCommit }}
+      - -X github.com/tabnaeem/git-flow-plus/internal/cli.GitBranch={{ .Branch }}
+      - -X github.com/tabnaeem/git-flow-plus/internal/cli.BuildDate={{ .Date }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: git-flow-plus
+    ids:
+      - git-flow-plus
+    name_template: "git-flow-plus-{{ .Os }}-{{ .Arch }}"
+    wrap_in_directory: false
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+# .deb and .rpm for Linux — satisfies BUILD PIPELINE's "Linux: deb, rpm".
+# Windows (.exe/.msi) and macOS (.pkg) are built separately (see the
+# header comment above) since nfpm only targets Linux.
+nfpms:
+  - id: git-flow-plus
+    ids:
+      - git-flow-plus
+    package_name: git-flow-plus
+    file_name_template: "git-flow-plus-{{ .Version }}-{{ .Arch }}"
+    vendor: Git Flow Plus Contributors
+    homepage: https://github.com/tabnaeem/git-flow-plus
+    maintainer: Tabish Naeem <mtnaeem9108@sbtjapan.com>
+    description: >-
+      Git Flow with enterprise release management — Sprint.Feature.
+      ReleaseFix.DevOps.QA versioning, mandatory release tagging, and a
+      Feature Registry, on top of the standard Git Flow branching model.
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    contents:
+      # `git flow ...` only resolves as a Git subcommand if a binary
+      # literally named "git-flow" is on PATH — see internal/cli/doctor.go's
+      # PATH check and WindowsInstallation.md's equivalent note for the
+      # Windows installer.
+      - src: /usr/bin/git-flow-plus
+        dst: /usr/bin/git-flow
+        type: symlink
+
+changelog:
+  sort: asc
+  use: git
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"
+
+release:
+  github:
+    owner: tabnaeem
+    name: git-flow-plus
+  name_template: "Git Flow Plus {{ .Tag }}"
+  header: |
+    See [ReleaseNotes.md](https://github.com/tabnaeem/git-flow-plus/blob/main/ReleaseNotes.md) for the full changelog and [Installation.md](https://github.com/tabnaeem/git-flow-plus/blob/main/Installation.md) to get started.
+  footer: |
+    **Checksums:** verify any downloaded asset against `checksums.txt` (see [Installation.md](https://github.com/tabnaeem/git-flow-plus/blob/main/Installation.md#verifying-a-download)).

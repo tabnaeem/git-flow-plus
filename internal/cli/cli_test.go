@@ -8,11 +8,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
-	"github.com/hulhub/git-flow-plus/internal/cli"
-	"github.com/hulhub/git-flow-plus/internal/config"
-	"github.com/hulhub/git-flow-plus/internal/git"
+	"github.com/tabnaeem/git-flow-plus/internal/cli"
+	"github.com/tabnaeem/git-flow-plus/internal/config"
+	"github.com/tabnaeem/git-flow-plus/internal/git"
 )
 
 // testApp constructs an App wired to in-memory output buffers, a real
@@ -69,6 +70,26 @@ func TestRootCommandHasAllRequiredSubcommands(t *testing.T) {
 			t.Errorf("root command missing subcommand %q", name)
 		}
 	}
+}
+
+// stubGitFlowOnPath creates a dummy "git-flow" executable in a temp
+// directory and prepends it to PATH for the duration of the test, so
+// doctor's PATH check (which requires a real "git-flow" resolvable via
+// exec.LookPath — that's what makes `git flow ...` work as a Git
+// subcommand) passes the way it would on a real installed system, without
+// depending on the host machine already having one.
+func stubGitFlowOnPath(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	name := "git-flow"
+	if runtime.GOOS == "windows" {
+		name = "git-flow.exe"
+	}
+	stub := filepath.Join(dir, name)
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("stubGitFlowOnPath: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func mustRun(t *testing.T, app *cli.App, args ...string) {
@@ -557,18 +578,18 @@ func writeFileAndCommit(t *testing.T, repoPath, name, contents, message string) 
 // --- doctor ---
 
 func TestDoctorHealthyAfterInit(t *testing.T) {
+	stubGitFlowOnPath(t)
 	app, out, _ := testApp(t)
 	mustRun(t, app, "init")
 	out.Reset()
 
 	if err := run(t, app, "doctor"); err != nil {
-		t.Fatalf("run(doctor) error = %v, want a clean bill of health after init", err)
+		t.Fatalf("run(doctor) error = %v, want a clean bill of health after init; output:\n%s", err, out.String())
 	}
-	if !bytes.Contains(out.Bytes(), []byte("gitflowplus config")) {
-		t.Errorf("doctor output = %q, want it to include a config check", out.String())
-	}
-	if !bytes.Contains(out.Bytes(), []byte("staging branch")) {
-		t.Errorf("doctor output = %q, want it to include a staging branch check", out.String())
+	for _, want := range []string{"gitflowplus config", "staging branch", "git version", "permissions", "git flow plus version", "PATH", "release configuration"} {
+		if !bytes.Contains(out.Bytes(), []byte(want)) {
+			t.Errorf("doctor output = %q, want it to include a %q check", out.String(), want)
+		}
 	}
 }
 

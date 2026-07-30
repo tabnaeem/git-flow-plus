@@ -9,38 +9,40 @@ import (
 	"sync"
 )
 
-// ANSI color codes for each level, used only when a consoleHandler is
-// constructed with color enabled. Detection of whether the destination
-// actually supports color (a real terminal, no NO_COLOR, etc.) is the
-// caller's responsibility — see internal/cli/root.go — so this package
-// stays free of any terminal/OS-specific logic.
+// ANSI color codes, used only when a consoleHandler (or another colorized
+// renderer, e.g. `git flow doctor` in internal/cli) is constructed with
+// color enabled. Detection of whether the destination actually supports
+// color (a real terminal, no NO_COLOR, etc.) is the caller's
+// responsibility — see internal/cli/root.go — so this package stays free
+// of any terminal/OS-specific logic. Exported so every colorized command
+// output shares one palette instead of each package defining its own.
 const (
-	ansiReset   = "\x1b[0m"
-	ansiGray    = "\x1b[90m"
-	ansiCyan    = "\x1b[36m"
-	ansiBlue    = "\x1b[34m"
-	ansiGreen   = "\x1b[32m"
-	ansiYellow  = "\x1b[33m"
-	ansiRed     = "\x1b[31m"
-	ansiRedBold = "\x1b[1;31m"
+	AnsiReset   = "\x1b[0m"
+	AnsiGray    = "\x1b[90m"
+	AnsiCyan    = "\x1b[36m"
+	AnsiBlue    = "\x1b[34m"
+	AnsiGreen   = "\x1b[32m"
+	AnsiYellow  = "\x1b[33m"
+	AnsiRed     = "\x1b[31m"
+	AnsiRedBold = "\x1b[1;31m"
 )
 
 func levelColor(l slog.Level) string {
 	switch {
 	case l < LevelDebug:
-		return ansiGray
+		return AnsiGray
 	case l < LevelInfo:
-		return ansiCyan
+		return AnsiCyan
 	case l < LevelSuccess:
-		return ansiBlue
+		return AnsiBlue
 	case l < LevelWarn:
-		return ansiGreen
+		return AnsiGreen
 	case l < LevelError:
-		return ansiYellow
+		return AnsiYellow
 	case l < LevelFatal:
-		return ansiRed
+		return AnsiRed
 	default:
-		return ansiRedBold
+		return AnsiRedBold
 	}
 }
 
@@ -78,7 +80,7 @@ func (h *consoleHandler) Handle(_ context.Context, r slog.Record) error {
 		b.WriteByte('[')
 		b.WriteString(label)
 		b.WriteByte(']')
-		b.WriteString(ansiReset)
+		b.WriteString(AnsiReset)
 	} else {
 		b.WriteByte('[')
 		b.WriteString(label)

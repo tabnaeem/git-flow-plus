@@ -3,7 +3,7 @@ package config_test
 import (
 	"testing"
 
-	"github.com/hulhub/git-flow-plus/internal/config"
+	"github.com/tabnaeem/git-flow-plus/internal/config"
 )
 
 func TestApplyEnvOverridesLeavesConfigUntouchedWhenUnset(t *testing.T) {

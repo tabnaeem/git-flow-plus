@@ -6,7 +6,7 @@ package main
 import (
 	"os"
 
-	"github.com/hulhub/git-flow-plus/internal/cli"
+	"github.com/tabnaeem/git-flow-plus/internal/cli"
 )
 
 func main() {

@@ -1,4 +1,4 @@
-module github.com/hulhub/git-flow-plus
+module github.com/tabnaeem/git-flow-plus
 
 go 1.26.5
 

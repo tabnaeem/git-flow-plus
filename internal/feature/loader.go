@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/hulhub/git-flow-plus/internal/config"
+	"github.com/tabnaeem/git-flow-plus/internal/config"
 )
 
 // FileName is the name of the registry file inside the Git Flow Plus
