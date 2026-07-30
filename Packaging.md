@@ -1,7 +1,7 @@
 # Packaging
 
 How every distributable artifact — binaries, archives, checksums,
-`.deb`/`.rpm`, the Windows `.exe`/`.msi`, the macOS `.pkg` — is actually
+`.deb`/`.rpm`, the Windows installer, the macOS `.pkg` — is actually
 assembled. See [Building.md](Building.md) for the commands, and
 [ReleaseProcess.md](ReleaseProcess.md) for how this all fires
 automatically on a tag push.
@@ -34,111 +34,138 @@ copy, since Linux filesystems make that essentially free.
 
 ## Windows: installer choice
 
-Evaluated three options for the primary `.exe` installer:
-
-| | Inno Setup | WiX | NSIS |
-|---|---|---|---|
-| Output | `.exe` | real `.msi` | `.exe` |
-| Silent install/uninstall | native | native | native |
-| Per-user vs machine-wide | native dual-mode picker (v6.1+) | `Scope` attribute, one mode per build | via plugin |
-| PATH management | hand-written (well-documented recipe) | native `<Environment>` element | community plugin |
-| Upgrade/prior-version detection | native (`AppId` + uninstall-string lookup) | native (`MajorUpgrade`) | manual |
-| Pre-install checks (Git, admin) | easy (Pascal Script) | needs custom actions | possible, clunkier |
-| CI availability | **preinstalled on GitHub's `windows-latest`** | `dotnet tool install` (fast) | manual install |
-| Enterprise deployment (GPO/SCCM/Intune) | not ideal (not a real MSI) | **this is what MSI is for** | not ideal |
-
-**Decision:** Inno Setup as the primary `.exe`
-([installer/windows/gitflowplus.iss](installer/windows/gitflowplus.iss)),
-WiX as the optional `.msi`
-([installer/windows/gitflowplus.wxs](installer/windows/gitflowplus.wxs))
-for GPO/SCCM/Intune deployment. NSIS didn't offer anything Inno doesn't
-already provide for this use case, and Inno being preinstalled on
-GitHub's Windows runner is a concrete, ongoing maintenance win.
-
-### The `.exe` installer
+**Decision:** [NSIS](https://nsis.sourceforge.io/) (Nullsoft Scriptable
+Install System), producing a single `GitFlowPlusSetup_v<version>_x64.exe`
+— the same installer technology (or the same category — a lightweight,
+scriptable `.exe` wizard) GitHub CLI, Terraform, and Docker CLI ship on
+Windows. This is a deliberate project choice, not a comparison-driven
+one: Inno Setup and WiX are explicitly not used here. Source:
+[build/windows/installer.nsi](build/windows/installer.nsi),
+[build/windows/create-installer.ps1](build/windows/create-installer.ps1).
 
 Full user-facing behavior is documented in
 [WindowsInstallation.md](WindowsInstallation.md). Implementation notes:
 
-- **PATH management** is hand-written Pascal (`EnvAddPath`/
-  `EnvRemovePath` in the `.iss`'s `[Code]` section) rather than Inno's
-  `[Registry]` section with `uninsdeletevalue` — that flag deletes the
-  **entire** `Path` registry value on uninstall, which would wipe out
-  every other program's PATH entries too. The hand-written version
-  splices out exactly the installed directory, verified via a real
-  install → `doctor` (all green, including the `PATH` check) → uninstall
-  → PATH restored **byte-for-byte** to its pre-install value, tested
-  against a real ~1,800-character PATH with 40+ existing entries.
-- **Upgrade detection** looks up the previous install's own uninstall
-  registry key (via its fixed `AppId` GUID) and silently runs that
-  uninstaller first — the standard Inno "self-upgrade" recipe.
-- **The seeded `default-config.json`** is a real file
-  ([installer/windows/default-config.json](installer/windows/default-config.json)),
-  bundled via `[Files] ... Flags: dontcopy` and copied at install time —
-  not a string constructed in Pascal — specifically so the WiX `.msi`
-  can reference the exact same file rather than duplicating its content.
-- **GUID escaping gotcha:** `[Setup]` section values (like `AppId`) pass
-  through Inno's own `{constant}` parser *after* the preprocessor
-  substitutes `{#MyAppId}` — a single-braced GUID there gets misread as
-  an unknown constant reference. The fix is a second preprocessor
-  constant with doubled braces used only in `[Setup]`; Pascal `[Code]`
-  string literals use the plain single-braced form. See the comments at
-  the top of the `.iss` for the exact mechanism.
+### Executable icon and version resource
 
-### `.msi` (enterprise deployment)
+Before NSIS ever runs, [go-winres](https://github.com/tc-hib/go-winres)
+embeds `build/windows/icon.ico` and version metadata directly into
+`git-flow-plus.exe` itself (not just the installer wrapper) — a
+`before.hooks` entry in `.goreleaser.yaml` runs `go-winres simply
+--icon build/windows/icon.ico --product-version git-tag ...`, which
+writes a `.syso` Windows resource object next to
+`cmd/git-flow-plus/main.go`. Go's build toolchain links a `.syso` in
+automatically for any `windows` target with no special `go build` flags
+— it just has to be present. `--product-version git-tag`/`--file-version
+git-tag` pull the version directly from the tag being released, and
+gracefully fall back to `0.0.0` for local snapshot builds with no tags
+(matching GoReleaser's own `v0.0.0` snapshot convention). `.syso` files
+are build output, not source — `.gitignore`d, regenerated on every
+build.
 
-See [WindowsInstallation.md#msi-enterprise-deployment](WindowsInstallation.md#msi-enterprise-deployment)
-for user-facing behavior. It's deliberately narrower in scope than the
-`.exe`:
+The installer itself (`installer.nsi`) embeds the **same** icon
+(`MUI_ICON`/`MUI_UNICON`) and its own `VIProductVersion`/
+`VIAddVersionKey` block, so both the installer `.exe` and the installed
+`git-flow-plus.exe` show correct icon/version/publisher metadata in
+Windows Explorer's Properties dialog.
 
-- **Per-machine only** — MSI's `Scope` is fixed per build; Group
-  Policy/SCCM/Intune push to machines, not interactively-logged-in
-  users, so there's no dual-mode picker to build.
-- **No Git/Git Bash/PowerShell detection** — meaningless for an
-  unattended push to already-vetted machines, and WiX doesn't have
-  Inno's easy scripting for this without a custom-action DLL.
-- **Config seeded under `C:\ProgramData`**, not a user's `%APPDATA%` — a
-  per-machine install has no single "current user" to scope a roaming
-  profile to.
-- **PATH management uses WiX's native `<Environment>` element** — since
-  WiX v4, `Environment` moved into the *core* `wxs` schema (no `util:`
-  extension prefix needed, unlike WiX v3). Its MSI-table-level encoding
-  was verified directly: `Action="set" Permanent="no" Part="last"
-  System="yes"` compiles to the Environment table row
-  `=-*PATH | [~];[INSTALLFOLDER]` — `=` (set), `-` (remove on
-  uninstall), `*` (per-machine), and `[~]` (existing value) `;`
-  (append) `[INSTALLFOLDER]`, exactly matching Windows Installer's
-  documented format.
-- **No `NeverOverwrite`** — modern WiX dropped that File attribute.
-  The seeded config's component is marked `Permanent="yes"` so it
-  survives uninstall, matching the `.exe`'s behavior, but a version
-  *upgrade* follows ordinary MSI file-versioning rules rather than an
-  unconditional "leave it alone" — a documented, minor difference from
-  the `.exe` installer.
+### PATH management
 
-#### WiX v7 licensing
+NSIS's stock distribution does **not** bundle the community `EnVar`
+plugin that most PATH-manipulation tutorials assume — confirmed by
+inspecting `C:\Program Files (x86)\NSIS\Plugins\x86-unicode\` directly,
+which contains only stock plugins. Rather than take on an extra plugin
+dependency, PATH add/remove is hand-written NSIS operating on
+`HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment`
+(`WriteRegExpandStr`, broadcasting `WM_WININICHANGE` so already-open
+programs pick up the change without a reboot):
 
-WiX Toolset v7 gates its own CLI behind accepting a paid **Open Source
-Maintenance Fee (OSMF)** EULA (`wix extension add` refuses to run
-without it — see https://wixtoolset.org/osmf/). That's a licensing
-decision for whoever maintains this project to make, not something to
-accept unattended in a build script. **Pin to WiX v6** instead
-(`dotnet tool install --global wix --version 6.0.1`), the last major
-version under the traditional open license — everything in
-`gitflowplus.wxs` was authored and verified against v6.
+- **Add** is idempotent — a `PathContains` check runs first, so
+  reinstalling or repairing never produces a duplicate entry.
+- **Remove** explicitly handles all four positions an entry can be in
+  (only entry / first / last / middle), correctly re-joining the two
+  neighbors with a single separator when removing from the middle. An
+  earlier, simpler version that padded both sides of the haystack and
+  spliced out the padded match looked correct but silently ate the
+  separator between the two remaining neighbors on a middle removal —
+  caught before it ever shipped by a throwaway, unelevated
+  (`RequestExecutionLevel user`) NSIS test harness that exercised all
+  four cases against a scratch `HKCU` registry value instead of the
+  real machine PATH, so it could run without admin rights or risk to a
+  real environment. See the comments directly above
+  `un.RemoveFromPath` in `installer.nsi` for the corrected algorithm.
+
+### Add/Remove Programs
+
+Standard `WriteRegStr`/`WriteRegDWORD` calls under
+`Software\Microsoft\Windows\CurrentVersion\Uninstall\GitFlowPlus`
+(`DisplayName`, `DisplayVersion`, `Publisher`, `InstallLocation`,
+`UninstallString`, `QuietUninstallString`, `NoModify`/`NoRepair` = 1,
+and `EstimatedSize` via `FileFunc.nsh`'s `${GetSize}` macro) — this is
+what makes the install show up correctly in Settings → Apps and support
+a one-click uninstall from there.
+
+### Upgrade detection
+
+`.onInit` reads `UninstallString` from the same registry key. If a
+previous install is found, it prompts for confirmation (skipped
+entirely under `/S`) and then `ExecWait`s that prior uninstaller with
+`/S _?=$INSTDIR` before continuing — the standard "self-upgrade" NSIS
+recipe, always machine-wide since the installer only supports
+`RequestExecutionLevel admin` (no per-user mode, unlike the project's
+earlier Inno Setup prototype).
 
 ### Building locally
 
-```bash
-# stage a flat binary directory — see Building.md for the full build command
-mkdir -p dist/windows-x64 && GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o dist/windows-x64/git-flow-plus.exe ./cmd/git-flow-plus
+```powershell
+# 1. Build the binary (see Building.md for the full ldflags-stamped command)
+mkdir dist\windows-x64 -Force
+$env:GOOS = "windows"; $env:GOARCH = "amd64"; $env:CGO_ENABLED = "0"
+go build -o dist\windows-x64\git-flow-plus.exe .\cmd\git-flow-plus
 
-# Inno Setup .exe
-iscc /DMyAppVersion=5.3.4.1.2 /DMyAppArch=x64 installer/windows/gitflowplus.iss
-
-# WiX .msi (run from installer/windows/)
-wix build gitflowplus.wxs -arch x64 -d MsiVersion=5.3.4.1 -d BinDir=../../dist/windows-x64 -o ../../dist/installer/git-flow-plus-5.3.4.1.2-windows-x64.msi
+# 2. Build the installer
+.\build\windows\create-installer.ps1 -Version 1.4.0 -BinDir dist\windows-x64 -OutDir dist\installer
 ```
+
+`create-installer.ps1` stages nothing itself (NSIS's `File` directives
+read the binary directly from `-BinDir`, and `README.txt`/`license.txt`
+are checked-in/synced-from-`LICENSE` respectively) — it normalizes the
+version string into NSIS's `/DVERSION`/`/DFILEVERSION` preprocessor
+defines, locates `makensis.exe` (`winget install NSIS.NSIS` or
+`choco install nsis`, checking the two conventional install paths if
+it's not already on `PATH`), and reports the output file's path, size,
+and SHA256 on success. **Invoke `makensis` from PowerShell, not Git
+Bash** — Git Bash mangles a leading `/D` on an argument (POSIX path
+translation kicks in), producing NSIS's usage/help text instead of a
+compile; `create-installer.ps1` itself is PowerShell for exactly this
+reason.
+
+## Release integrity: SBOM and reproducible builds
+
+- **Software Bill of Materials**: `.goreleaser.yaml`'s `sboms:` block
+  generates one CycloneDX/SPDX SBOM per archive (`{{ .ArtifactName
+  }}.sbom.json`) via [syft](https://github.com/anchore/syft), listing
+  every Go module compiled into that binary with license and checksum
+  data. This is GoReleaser's own documented mechanism, not a custom
+  script. `syft` must be on `PATH` when building — CI installs it via
+  `anchore/sbom-action/download-syft@v0`
+  (see [ReleaseProcess.md](ReleaseProcess.md)); for a local
+  `goreleaser release --snapshot` run, download a `syft` release
+  binary and add it to `PATH` **natively** (e.g. via PowerShell's
+  `$env:PATH`) rather than through Git Bash's `export` — GoReleaser is
+  a native Windows binary, and Git Bash's POSIX-style PATH entries
+  don't reliably translate into a native child process's own `PATH`
+  environment variable, which surfaces as `syft: executable file not
+  found in %PATH%` even though `syft` is genuinely reachable from the
+  Bash shell itself.
+- **Reproducible builds**: `ldflags`'s `BuildDate` uses GoReleaser's
+  `{{ .CommitDate }}` template variable, not `{{ .Date }}` — `.Date` is
+  the actual wall-clock build time, which would make two builds of the
+  exact same commit/tag produce byte-different binaries purely because
+  they ran at different times. `.CommitDate` is derived from the commit
+  itself, so it's identical no matter when or where the build runs.
+  `mod_timestamp: "{{ .CommitTimestamp }}"` applies the same principle
+  to file timestamps inside the built archives.
 
 ## macOS: `.pkg`
 
@@ -170,17 +197,17 @@ tag (stripped of its leading `v`), the same value that already flows
 into `-ldflags` for `cli.Version`. No artifact re-derives or
 independently guesses a version.
 
-One real technical wrinkle: Windows' native `VERSIONINFO` resource (Inno
-`VersionInfoVersion`) and MSI's `ProductVersion` are conventionally 3–4
-numeric fields, but Git Flow Plus's own version has 5
-(`Sprint.Feature.ReleaseFix.DevOps.QA`, e.g. `5.3.4.1.2`). Both Windows
-installers drop the trailing QA-build digit for their embedded version
-resource only (`5.3.4.1`) — the full 5-part string still appears as the
-human-facing display version (Inno's `AppVersion`, the `.msi`'s
-`ProductName`/release notes). QA-iteration count isn't meaningful
-metadata for the *shipped file's own* version; Sprint+Feature+Fix+DevOps
-is. This mapping is intentionally the same on both installers (and in
-`release.yml`'s version-computation step) so they never drift apart.
+One real technical wrinkle: Windows' native `VERSIONINFO` resource
+(NSIS's `VIProductVersion`, and the `.syso` go-winres embeds into
+`git-flow-plus.exe` itself) is strictly 4 numeric fields, but Git Flow
+Plus's own version has 5 (`Sprint.Feature.ReleaseFix.DevOps.QA`, e.g.
+`5.3.4.1.2`). `create-installer.ps1`'s `Resolve-VersionParts` drops the
+trailing QA-build digit for the embedded version resource only
+(`5.3.4.1`) — the full 5-part string still appears as the human-facing
+display version (the installer's `DisplayVersion` in Add/Remove
+Programs, and the output filename `GitFlowPlusSetup_v5.3.4.1.2_x64.exe`
+itself). QA-iteration count isn't meaningful metadata for the *shipped
+file's own* version; Sprint+Feature+Fix+DevOps is.
 
 ## Unsigned artifacts
 

@@ -1,75 +1,73 @@
 # Windows Installation
 
 Windows is Git Flow Plus's primary-priority platform for installation
-tooling — this document covers the `.exe` installer (Inno Setup) in
-full, plus the optional `.msi` for enterprise deployment. Source: see
-[installer/windows/gitflowplus.iss](installer/windows/gitflowplus.iss)
-and [installer/windows/gitflowplus.wxs](installer/windows/gitflowplus.wxs);
+tooling. This document covers the `GitFlowPlusSetup_v<version>_x64.exe`
+installer in full — a modern-wizard NSIS installer, the same category of
+tool GitHub CLI, Terraform, and Docker CLI ship on Windows. Source: see
+[build/windows/installer.nsi](build/windows/installer.nsi) and
+[build/windows/create-installer.ps1](build/windows/create-installer.ps1);
 build details in [Packaging.md](Packaging.md).
 
 ## Installing
 
-Download `git-flow-plus-<version>-windows-<x64|arm64>-setup.exe` from
+Download `GitFlowPlusSetup_v<version>_x64.exe` from
 [the latest release](https://github.com/tabnaeem/git-flow-plus/releases)
-and run it. It will:
+and run it. Windows will prompt for administrator elevation (UAC) — the
+installer always installs machine-wide, under `Program Files`. The
+wizard has six pages:
 
-1. Detect a prior Git Flow Plus install (by its own installer ID) and
-   silently remove it first, so an upgrade never leaves stale files
-   behind.
-2. Detect whether `git` is on `PATH`, and warn (not block) if it isn't —
-   Git Flow Plus needs Git to function, but you can install Git
-   afterwards and re-run `git flow doctor` to confirm.
-3. Detect Git Bash and PowerShell (informational only).
-4. Let you choose **per-user** (default, no admin prompt) or
-   **machine-wide** (all users, requires elevation) — Inno Setup's
-   install-mode page, or pass `/CURRENTUSER`/`/ALLUSERS` on the command
-   line to skip the prompt (see [Silent install](#silent-install)
-   below).
-5. Install to `%LOCALAPPDATA%\Programs\GitFlowPlus` (per-user) or
-   `C:\Program Files\GitFlowPlus` (machine-wide).
-6. Add the install directory to `PATH` (the user's `PATH` for a per-user
-   install, the system `PATH` for machine-wide) — see
-   [PATH and `git flow`](#path-and-git-flow) below for exactly why this
-   matters.
-7. Seed a default configuration file — see [Seeded files](#seeded-files).
-8. Offer to run `git flow doctor` and `git flow version` at the end, so
-   you can see the install actually worked before closing the wizard.
+1. **Welcome**
+2. **License** — the project's MIT license
+3. **Choose Installation Folder** — defaults to
+   `C:\Program Files\Git Flow Plus`
+4. **Select Components**:
+   - ☑ **Add to PATH** (checked by default)
+   - ☑ **Start Menu Shortcut** (checked by default)
+   - ☐ **Desktop Shortcut** (unchecked by default)
+5. **Install**
+6. **Completed** — offers to run `git flow doctor` before closing, so
+   you can confirm the install actually worked without opening a
+   terminal yourself.
+
+If a previous version is already installed, the wizard detects it (via
+its own Add/Remove Programs registry entry) and, after a confirmation
+prompt, silently uninstalls it first — so an upgrade never leaves stale
+files behind. See [Upgrading](#upgrading) below.
 
 ## Silent install
 
 ```powershell
-git-flow-plus-5.3.4.1.2-windows-x64-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER
+GitFlowPlusSetup_v1.4.0_x64.exe /S
 ```
 
-- `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` — no UI at all, including
-  the Git-detection warning dialog.
-- `/CURRENTUSER` — per-user install, no admin elevation prompt. Use
-  `/ALLUSERS` instead for a machine-wide silent install (this does
-  require the invoking process to already be elevated — a UAC prompt
-  can't be answered non-interactively).
-- `/DIR="C:\Custom\Path"` — override the install location.
-- `/LOG="install.log"` — write a log file, useful for CI/scripted
-  deployment debugging.
+That's the entire invocation — standard NSIS silent-install syntax. No
+UI, no prompts, including the upgrade-confirmation dialog (an existing
+install is removed automatically rather than asking). Component
+defaults still apply in silent mode exactly as they would if you
+clicked through the wizard: PATH and the Start Menu shortcut are
+installed, the Desktop shortcut is not.
 
-This exact invocation (per-user, `/CURRENTUSER`) was run and verified
-end-to-end during development: install → `PATH` updated → `git flow
-doctor` all green → silent uninstall → `PATH` restored to its exact
-original value, config preserved. See [Silent
-uninstall](#silent-uninstall) below for the reverse.
+- `/D=C:\Custom\Path` — override the install location. Must be the
+  **last** argument, unquoted even if the path contains spaces (a stock
+  NSIS requirement, not a Git Flow Plus one).
+- Because the installer requests admin elevation
+  (`RequestExecutionLevel admin`), the *invoking* process needs to
+  already be elevated for a truly unattended silent install (e.g. a
+  provisioning script running as SYSTEM/Administrator) — a UAC prompt
+  can't be answered non-interactively any more than it can for any
+  other Windows installer.
 
 ## Silent uninstall
 
 ```powershell
-"%LOCALAPPDATA%\Programs\GitFlowPlus\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+"C:\Program Files\Git Flow Plus\Uninstall.exe" /S
 ```
 
-(Substitute the machine-wide path, `C:\Program Files\GitFlowPlus\unins000.exe`,
-for a machine-wide install.) This removes the installed binaries and the
-`PATH` entry — precisely that entry, spliced out without touching any of
-your other `PATH` directories. It does **not** delete your seeded
-configuration or logs directory (see [Seeded files](#seeded-files)) —
-consistent with every other installer on Windows not deleting your data
-just because you uninstalled the program that created it.
+This removes the installed binaries, shortcuts, the Add/Remove Programs
+entry, and — precisely — the `PATH` entry it added, spliced out without
+touching any of your other `PATH` directories (see
+[PATH and `git flow`](#path-and-git-flow) below for how that splice is
+implemented safely).
 
 ## PATH and `git flow`
 
@@ -85,63 +83,49 @@ identical copy), so:
 `git flow doctor`'s `PATH` check verifies this exact condition — if it
 ever reports `FAIL`, see [Troubleshooting.md](Troubleshooting.md).
 
+The installer's PATH management is hand-written NSIS (no third-party
+plugin — see [Packaging.md#path-management](Packaging.md#path-management)
+for why) operating on the machine `PATH`
+(`HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment`):
+adding is a no-op if the directory is already present (no duplicate
+entries on repeated installs/repairs), and removal on uninstall splices
+out exactly that one entry, correctly re-joining its two neighbors
+whichever position it was in — first, last, middle, or the only entry.
+A `WM_WININICHANGE` broadcast tells already-open programs (Explorer,
+other terminals) to pick up the change without a reboot; a **freshly
+opened** terminal always sees it immediately either way.
+
 ## Default locations
 
-| What | Per-user | Machine-wide |
-|---|---|---|
-| Program files | `%LOCALAPPDATA%\Programs\GitFlowPlus` | `C:\Program Files\GitFlowPlus` |
-| Configuration | `%APPDATA%\GitFlowPlus\config.json` | `C:\ProgramData\GitFlowPlus\config.json` |
-| Logs (reserved) | `%LOCALAPPDATA%\GitFlowPlus\logs` | `C:\ProgramData\GitFlowPlus\logs` |
+| What | Location |
+|---|---|
+| Program files | `C:\Program Files\Git Flow Plus` |
+| Start Menu shortcuts | `Start Menu\Programs\Git Flow Plus` |
+| Desktop shortcut (optional) | `%USERPROFILE%\Desktop\Git Flow Plus.lnk` |
+| Uninstaller | `C:\Program Files\Git Flow Plus\Uninstall.exe` |
+| Add/Remove Programs entry | `HKLM\...\Uninstall\GitFlowPlus` |
 
-## Seeded files
+There is no seeded configuration file — Git Flow Plus only reads
+configuration from a repository's own `.gitflowplus/config.json` (see
+[ReleaseManagement.md](ReleaseManagement.md)), so there's nothing global
+for the installer to create ahead of time.
 
-The installer creates the configuration directory above and seeds a
-`config.json` matching `internal/config.Default()`'s exact shape — a
-real, valid config, not a placeholder. **Git Flow Plus itself currently
-only reads configuration from a repository's own
-`.gitflowplus/config.json`** (see
-[ReleaseManagement.md](ReleaseManagement.md)) — this seeded copy exists
-as a ready-to-copy template and to reserve the conventional location for
-a possible future global-config feature. It is never overwritten if it
-already exists (an upgrade won't clobber edits you've made to it).
+## Upgrading
 
-The logs directory is created but not yet written to — reserved for a
-future file-based logging capability; see
-[Troubleshooting.md](Troubleshooting.md) for how to get diagnostic
-output today (`--verbose`/`--debug`/`--json-log`, all printed to the
-console).
+Just run the new version's installer. `.onInit` looks up the previous
+install's own uninstall registry key and, once you confirm (or silently,
+under `/S`), runs that uninstaller first — before laying down the new
+files. Your `PATH` entry, Start Menu shortcut, and any Desktop shortcut
+are recreated by the new install, so nothing is lost across the swap.
 
 ## Administrator rights
 
-Per-user installs never require elevation. A machine-wide install does,
-and Windows will prompt for it (standard UAC consent) unless the
-invoking process is already elevated. There's no way to silently elevate
-without an already-privileged caller — this is a Windows security
-boundary, not a Git Flow Plus limitation.
-
-## MSI (enterprise deployment)
-
-An optional `.msi` is published alongside the `.exe` for teams deploying
-via Group Policy, SCCM, or Intune — those tools expect a genuine MSI,
-not an Inno Setup executable. Deliberate differences from the `.exe`
-installer (see [Packaging.md](Packaging.md#windows-msi) for the full
-reasoning):
-
-- **Machine-wide only** — no per-user mode. Enterprise deployment always
-  targets a machine, not an interactively-logged-in user.
-- **No interactive Git/Git Bash/PowerShell detection** — meaningless for
-  an unattended push to already-vetted machines.
-- **Config seeded under `C:\ProgramData`**, not a specific user's
-  `%APPDATA%` — a per-machine install has no single "current user" to
-  scope a roaming profile to.
-
-```powershell
-msiexec /i git-flow-plus-5.3.4.1.2-windows-x64.msi /quiet /norestart
-msiexec /x git-flow-plus-5.3.4.1.2-windows-x64.msi /quiet /norestart
-```
-
-Upgrades are handled by MSI's native `MajorUpgrade` mechanism — installing
-a newer `.msi` automatically removes the older one first.
+The installer always requires elevation (`RequestExecutionLevel admin`)
+— there's no per-user install mode. Windows will show the standard UAC
+consent prompt when you launch it, unless the invoking process is
+already elevated. There's no way to silently elevate without an
+already-privileged caller — this is a Windows security boundary, not a
+Git Flow Plus limitation.
 
 ## Windows integration
 

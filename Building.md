@@ -80,10 +80,11 @@ their own OS:
 
 | Tool | Platform | Install |
 |---|---|---|
-| Inno Setup 6 | Windows | `winget install JRSoftware.InnoSetup` (preinstalled on GitHub's `windows-latest` runner) |
-| WiX v6 | Windows | `dotnet tool install --global wix --version 6.0.1` — **pin to v6**, not v7, which gates its CLI behind a paid Open Source Maintenance Fee EULA (see [Packaging.md](Packaging.md#wix-v7-licensing)) |
+| NSIS 3 (`makensis`) | Windows | `winget install NSIS.NSIS` or `choco install nsis` — installed explicitly in `windows-installer`'s CI job, not preinstalled on GitHub's `windows-latest` runner |
+| `go-winres` | any | `go install github.com/tc-hib/go-winres@latest` — pure Go, embeds the executable icon/version resource before the Windows build (see [Packaging.md#executable-icon-and-version-resource](Packaging.md#executable-icon-and-version-resource)) |
 | `lipo`/`pkgbuild`/`productbuild` | macOS | Part of Xcode Command Line Tools, preinstalled on GitHub's `macos-latest` runner |
 | `nfpm` (`.deb`/`.rpm`) | any | Bundled into GoReleaser itself — no separate install |
+| `syft` (SBOM generation) | any | Required on `PATH` for `goreleaser release`'s `sboms:` step; CI installs it via `anchore/sbom-action/download-syft@v0` — see [Packaging.md#release-integrity-sbom-and-reproducible-builds](Packaging.md#release-integrity-sbom-and-reproducible-builds) |
 
 ## CI/CD
 

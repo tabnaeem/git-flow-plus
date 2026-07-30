@@ -1,19 +1,30 @@
 name: Release
 
 # Triggered by pushing a tag like "v5.3.4.1.2". Three jobs:
-#   goreleaser        (ubuntu)  tests, lints, cross-compiles all 6
-#                                platforms via GoReleaser, packages
-#                                archives + checksums + .deb/.rpm,
-#                                creates the GitHub Release itself.
-#   windows-installer  (windows) builds the Inno Setup .exe (+ optional
-#                                WiX .msi) and uploads them to the
-#                                release the goreleaser job just created.
+#   goreleaser        (ubuntu)  refuses to run if a release for this tag
+#                                already exists (releases are immutable —
+#                                see below), then tests, lints,
+#                                cross-compiles all 6 platforms via
+#                                GoReleaser, packages archives +
+#                                checksums + SBOM + .deb/.rpm, creates
+#                                the GitHub Release itself, and attests
+#                                build provenance for every artifact.
+#   windows-installer  (windows) builds the NSIS .exe and uploads it to
+#                                the release the goreleaser job just
+#                                created.
 #   macos-pkg           (macos)  builds a universal .pkg and uploads it
 #                                the same way.
-# windows-installer/macos-pkg can't run inside GoReleaser itself — Inno
-# Setup and pkgbuild/productbuild only exist on their native OS — so
-# they run as separate jobs gated on the release already existing. See
+# windows-installer/macos-pkg can't run inside GoReleaser itself — NSIS
+# and pkgbuild/productbuild only exist on their native OS — so they run
+# as separate jobs gated on the release already existing. See
 # Packaging.md and ReleaseProcess.md for the full writeup.
+#
+# Immutability: neither Windows/macOS upload step uses `gh release
+# upload --clobber` — if an asset with that name already exists (e.g. a
+# job is manually re-run against an already-published release), the
+# upload fails loudly instead of silently overwriting a published
+# artifact. A genuinely bad release should be fixed by yanking it and
+# publishing a new tag, not by mutating one that already shipped.
 on:
   push:
     tags:
@@ -21,6 +32,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write # actions/attest-build-provenance
+  attestations: write
 
 jobs:
   goreleaser:
@@ -29,6 +42,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # full history, so GoReleaser's changelog resolves correctly
+
+      - name: Verify this release doesn't already exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::A GitHub Release for tag $GITHUB_REF_NAME already exists. Releases are immutable here — delete it explicitly first if this was intentional, or push a new tag."
+            exit 1
+          fi
 
       - uses: actions/setup-go@v7
         with:
@@ -46,6 +68,9 @@ jobs:
         with:
           version: latest
 
+      - name: Install syft (SBOM generation)
+        uses: anchore/sbom-action/download-syft@v0
+
       - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
@@ -54,6 +79,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BUILD_NUMBER: ${{ github.run_number }}
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/*.tar.gz,dist/*.zip,dist/*.deb,dist/*.rpm,dist/*.sbom.json"
 
   windows-installer:
     needs: goreleaser
@@ -65,84 +95,66 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Compute version strings
-        id: ver
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install -y nsis --no-progress
+          }
+
+      - name: Embed icon and version resource
         shell: bash
         run: |
-          # Same derivation GoReleaser uses: strip the leading "v" from
-          # the pushed tag (v5.3.4.1.2 -> 5.3.4.1.2), so the installer's
-          # version matches the binaries goreleaser just built exactly.
-          full="${GITHUB_REF_NAME#v}"
-          echo "full=$full" >> "$GITHUB_OUTPUT"
-          # Win32 VERSIONINFO/MSI ProductVersion are 4 numeric fields;
-          # Git Flow Plus's own version has 5 (Sprint.Feature.ReleaseFix.
-          # DevOps.QA) — drop the trailing QA-build digit. See
-          # Packaging.md.
-          echo "file=${full%.*}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          go install github.com/tc-hib/go-winres@latest
+          go-winres simply \
+            --arch amd64 \
+            --out cmd/git-flow-plus/rsrc \
+            --product-version git-tag \
+            --file-version git-tag \
+            --manifest cli \
+            --file-description "Git Flow Plus" \
+            --product-name "Git Flow Plus" \
+            --copyright "Copyright (c) Git Flow Plus Contributors" \
+            --original-filename git-flow-plus.exe \
+            --icon build/windows/icon.ico
 
-      - name: Build windows/amd64 and windows/arm64 binaries
+      - name: Build windows/amd64 binary
         shell: bash
         env:
           LDFLAGS_PKG: github.com/tabnaeem/git-flow-plus/internal/cli
-          FULL_VERSION: ${{ steps.ver.outputs.full }}
         run: |
           set -euo pipefail
-          LDFLAGS="-s -w \
-            -X ${LDFLAGS_PKG}.Version=${FULL_VERSION} \
-            -X ${LDFLAGS_PKG}.BuildNumber=${{ github.run_number }} \
-            -X ${LDFLAGS_PKG}.GitCommit=$(git rev-parse --short HEAD) \
-            -X ${LDFLAGS_PKG}.GitBranch=${GITHUB_REF_NAME} \
-            -X ${LDFLAGS_PKG}.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          for arch in amd64 arm64; do
-            mkdir -p "dist/windows-$([ "$arch" = amd64 ] && echo x64 || echo arm64)"
-            GOOS=windows GOARCH=$arch CGO_ENABLED=0 go build -trimpath \
-              -ldflags "$LDFLAGS" \
-              -o "dist/windows-$([ "$arch" = amd64 ] && echo x64 || echo arm64)/git-flow-plus.exe" \
-              ./cmd/git-flow-plus
-          done
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist/windows-x64
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
+            -ldflags "-s -w \
+              -X ${LDFLAGS_PKG}.Version=${VERSION} \
+              -X ${LDFLAGS_PKG}.BuildNumber=${{ github.run_number }} \
+              -X ${LDFLAGS_PKG}.GitCommit=$(git rev-parse --short HEAD) \
+              -X ${LDFLAGS_PKG}.GitBranch=${GITHUB_REF_NAME} \
+              -X ${LDFLAGS_PKG}.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o dist/windows-x64/git-flow-plus.exe \
+            ./cmd/git-flow-plus
 
-      - name: Compile Inno Setup installers (x64, arm64)
+      - name: Build NSIS installer
         shell: pwsh
         run: |
-          $iscc = "ISCC.exe"
-          if (-not (Get-Command $iscc -ErrorAction SilentlyContinue)) {
-            choco install -y innosetup --no-progress
-            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          }
-          foreach ($arch in @("x64", "arm64")) {
-            & $iscc "/DMyAppVersion=${{ steps.ver.outputs.full }}" "/DMyAppArch=$arch" installer\windows\gitflowplus.iss
-            if ($LASTEXITCODE -ne 0) { throw "ISCC failed for $arch" }
-          }
+          $version = "${env:GITHUB_REF_NAME}" -replace '^v', ''
+          .\build\windows\create-installer.ps1 -Version $version -BinDir dist\windows-x64 -OutDir dist\installer
 
-      - name: Install WiX v6 (optional MSI)
-        shell: bash
-        run: dotnet tool install --global wix --version 6.0.1
-
-      - name: Build WiX MSI installers (x64, arm64)
-        shell: bash
-        working-directory: installer/windows
-        run: |
-          set -euo pipefail
-          export PATH="$PATH:$HOME/.dotnet/tools"
-          for arch in x64 arm64; do
-            wix build gitflowplus.wxs -arch "$arch" \
-              -d MsiVersion="${{ steps.ver.outputs.file }}" \
-              -d BinDir="../../dist/windows-$arch" \
-              -o "../../dist/installer/git-flow-plus-${{ steps.ver.outputs.full }}-windows-$arch.msi"
-          done
-
-      - name: Checksum all Windows artifacts
+      - name: Checksum installer
         shell: bash
         run: |
           cd dist/installer
-          sha256sum *.exe *.msi > windows-checksums.txt
+          sha256sum *.exe > windows-checksums.txt
           cat windows-checksums.txt
 
       - name: Upload to the GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/installer/*.exe dist/installer/*.msi dist/installer/windows-checksums.txt --clobber
+        run: gh release upload "$GITHUB_REF_NAME" dist/installer/*.exe dist/installer/windows-checksums.txt
 
   macos-pkg:
     needs: goreleaser
@@ -193,4 +205,4 @@ jobs:
       - name: Upload to the GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/installer/*.pkg dist/installer/macos-checksums.txt --clobber
+        run: gh release upload "$GITHUB_REF_NAME" dist/installer/*.pkg dist/installer/macos-checksums.txt

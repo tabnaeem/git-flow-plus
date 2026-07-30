@@ -10,14 +10,41 @@
 #
 # CI (.github/workflows/release.yml) runs `goreleaser release --clean` on
 # every "v*" tag push, which additionally publishes the GitHub Release.
-# The Windows installer and macOS .pkg are NOT built here — nfpm (below)
-# only knows how to produce Linux packages. Those two are built in their
-# own CI jobs (windows-latest / macos-latest, since Inno Setup and
-# pkgbuild only run on their native OS) and uploaded to the release
-# GoReleaser creates via `gh release upload`, once it exists.
+# The Windows installer (NSIS) and macOS .pkg are NOT built here — nfpm
+# (below) only knows how to produce Linux packages, and NSIS/pkgbuild
+# have nothing to do with GoReleaser's own build/archive pipeline. Both
+# are built in their own CI jobs (windows-latest / macos-latest, since
+# makensis and pkgbuild only run on their native OS) and uploaded to the
+# release GoReleaser creates via `gh release upload`, once it exists —
+# see build/windows/create-installer.ps1, scripts/package-macos-pkg.sh,
+# and Packaging.md.
 version: 2
 
 project_name: git-flow-plus
+
+before:
+  hooks:
+    # Embeds build/windows/icon.ico and version metadata into the
+    # windows/amd64 + windows/arm64 binaries via a Go resource object
+    # (.syso) — go build links it in automatically for any windows
+    # target with no further flags, since it's simply present next to
+    # cmd/git-flow-plus/main.go. Pure Go tool; runs fine on any host OS,
+    # so this stays a single hook here rather than needing to move into
+    # one of the Windows-only jobs. "git-tag" pulls the version directly
+    # from the tag being released — see Packaging.md#executable-icon.
+    - go install github.com/tc-hib/go-winres@latest
+    - >-
+      go-winres simply
+      --arch amd64,arm64
+      --out cmd/git-flow-plus/rsrc
+      --product-version git-tag
+      --file-version git-tag
+      --manifest cli
+      --file-description "Git Flow Plus"
+      --product-name "Git Flow Plus"
+      --copyright "Copyright (c) Git Flow Plus Contributors"
+      --original-filename git-flow-plus.exe
+      --icon build/windows/icon.ico
 
 builds:
   - id: git-flow-plus
@@ -40,7 +67,12 @@ builds:
       - -X github.com/tabnaeem/git-flow-plus/internal/cli.BuildNumber={{ if index .Env "BUILD_NUMBER" }}{{ index .Env "BUILD_NUMBER" }}{{ else }}dev{{ end }}
       - -X github.com/tabnaeem/git-flow-plus/internal/cli.GitCommit={{ .ShortCommit }}
       - -X github.com/tabnaeem/git-flow-plus/internal/cli.GitBranch={{ .Branch }}
-      - -X github.com/tabnaeem/git-flow-plus/internal/cli.BuildDate={{ .Date }}
+      # .CommitDate, not .Date (the actual wall-clock build time): two
+      # builds of the exact same commit/tag should produce byte-identical
+      # binaries. Using the real build timestamp here would make that
+      # impossible, since it differs on every run even for identical
+      # inputs — see Packaging.md#reproducible-builds.
+      - -X github.com/tabnaeem/git-flow-plus/internal/cli.BuildDate={{ .CommitDate }}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:
@@ -62,6 +94,17 @@ archives:
 checksum:
   name_template: "checksums.txt"
   algorithm: sha256
+
+# One CycloneDX SBOM per archive, listing every Go module compiled into
+# that binary — attached to the release alongside the archive itself.
+# Requires `syft` on PATH (installed via a dedicated CI step; see
+# release.yml) — this is GoReleaser's own documented mechanism, not a
+# custom script, so it stays a single source of truth.
+sboms:
+  - id: archives
+    artifacts: archive
+    documents:
+      - "{{ .ArtifactName }}.sbom.json"
 
 # .deb and .rpm for Linux — satisfies BUILD PIPELINE's "Linux: deb, rpm".
 # Windows (.exe/.msi) and macOS (.pkg) are built separately (see the

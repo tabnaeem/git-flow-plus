@@ -21,15 +21,97 @@ GitKraken, and any Git-aware IDE or CI/CD system.
 
 ## Installing
 
-Windows: download the installer (`.exe`, or an optional `.msi` for
-GPO/SCCM/Intune deployment). Linux: `.deb`/`.rpm`. macOS: `.pkg`. All
-from [GitHub Releases](https://github.com/tabnaeem/git-flow-plus/releases) —
-see [Installation.md](Installation.md) for platform-specific steps, or
-build from source:
+Every install method comes from
+[GitHub Releases](https://github.com/tabnaeem/git-flow-plus/releases),
+built automatically on every tagged version. Full platform-specific
+detail lives in [Installation.md](Installation.md) and
+[WindowsInstallation.md](WindowsInstallation.md) — this is the quick
+version.
+
+### Windows Installation
+
+Download `GitFlowPlusSetup_v<version>_x64.exe` and run it — a six-page
+NSIS wizard (Welcome, License, install folder, components, install,
+finish) that installs to `C:\Program Files\Git Flow Plus`, adds it to
+`PATH`, and creates a Start Menu shortcut by default. See
+[WindowsInstallation.md](WindowsInstallation.md) for the full wizard
+walkthrough, upgrade behavior, and PATH internals.
+
+### Linux Installation
 
 ```bash
+sudo dpkg -i git-flow-plus-<version>-amd64.deb   # Debian/Ubuntu
+sudo rpm -i git-flow-plus-<version>-x86_64.rpm    # Fedora/RHEL
+```
+
+Both install to `/usr/bin/git-flow-plus` and create a `/usr/bin/git-flow`
+symlink automatically, so `git flow ...` resolves as a Git subcommand
+with nothing further to configure.
+
+### macOS Installation
+
+```bash
+sudo installer -pkg git-flow-plus-<version>-macos-universal.pkg -target /
+```
+
+A universal binary (Intel + Apple Silicon in one file) installed to
+`/usr/local/bin`. See
+[Installation.md#macos](Installation.md#macos) for the Gatekeeper
+`xattr` step an unsigned download needs on first run.
+
+### Silent Installation
+
+```powershell
+# Windows — standard NSIS silent flag, no UI at all
+GitFlowPlusSetup_v1.4.0_x64.exe /S
+```
+
+```bash
+# Linux and macOS package installers are already non-interactive
+sudo dpkg -i git-flow-plus-<version>-amd64.deb
+sudo installer -pkg git-flow-plus-<version>-macos-universal.pkg -target /
+```
+
+See [WindowsInstallation.md#silent-install](WindowsInstallation.md#silent-install)
+for silent-uninstall and custom-install-directory flags.
+
+### Command Line Installation
+
+Fetch and install the latest release without opening a browser:
+
+```powershell
+# Windows (PowerShell)
+$v = (Invoke-RestMethod https://api.github.com/repos/tabnaeem/git-flow-plus/releases/latest).tag_name
+Invoke-WebRequest "https://github.com/tabnaeem/git-flow-plus/releases/download/$v/GitFlowPlusSetup_${v}_x64.exe" -OutFile installer.exe
+.\installer.exe /S
+```
+
+```bash
+# Linux/macOS — build directly from source via Go's own installer
+go install github.com/tabnaeem/git-flow-plus/cmd/git-flow-plus@latest
+```
+
+`go install` places the binary in `$(go env GOPATH)/bin` under the name
+`git-flow-plus` — create the `git-flow` symlink yourself (see
+[Installation.md](Installation.md#linux)) if you want the `git flow ...`
+subcommand form.
+
+### Developer Documentation
+
+Building from a clone, running the test suite, or extending the
+codebase:
+
+```bash
+git clone https://github.com/tabnaeem/git-flow-plus.git
+cd git-flow-plus
 go build -o bin/git-flow ./cmd/git-flow-plus
 ```
+
+See [DeveloperGuide.md](DeveloperGuide.md) for day-to-day development,
+[Architecture.md](Architecture.md) for package structure and design
+decisions, and [Building.md](Building.md)/[Packaging.md](Packaging.md)
+for version-stamped builds, cross-compilation, and how each installer
+is assembled.
 
 ## Testing
 
@@ -73,8 +155,8 @@ environment variables — see
 - **[Installation.md](Installation.md)** — installing on Windows, Linux,
   or macOS, from an installer/package, an archive, or source.
 - **[WindowsInstallation.md](WindowsInstallation.md)** — the Windows
-  `.exe`/`.msi` installers in full: silent install/uninstall, per-user vs.
-  machine-wide, PATH, and IDE/terminal integration.
+  installer in full: the wizard, silent install/uninstall, PATH, and
+  IDE/terminal integration.
 - **[Building.md](Building.md)** — cross-compiling and version metadata.
 - **[Packaging.md](Packaging.md)** — how every installer/package is built.
 - **[ReleaseProcess.md](ReleaseProcess.md)** — cutting and publishing a release.
@@ -135,8 +217,9 @@ genuinely merged by `release feature add`, and stay alive until `release
 finish` deletes them), production-grade structured logging,
 environment-aware configuration, and a full cross-platform build/release
 pipeline (`make dist`/`make package`, `.github/workflows/release.yml`)
-producing binaries for Windows, Linux, and macOS on both amd64 and arm64.
+producing binaries for Windows, Linux, and macOS on both amd64 and arm64,
+plus a Windows NSIS installer, Linux `.deb`/`.rpm`, and a macOS `.pkg`.
 Not yet built: multi-release support (starting a second release while one
 is active is rejected outright, not disambiguated), and package-manager
-installers (Homebrew, Chocolatey, Scoop, `.deb`, `.rpm`, MSI). See
+installers (Homebrew, Chocolatey, Scoop). See
 [Roadmap.md](Roadmap.md) for the full picture.

@@ -1,9 +1,0 @@
-{
-  "environment": "development",
-  "branches": { "main": "main", "develop": "develop", "staging": "staging" },
-  "prefixes": {
-    "feature": "feature/", "hotfix": "hotfix/", "support": "support/",
-    "releaseFix": "release-fix/", "devops": "release-devops/", "versionTag": "v"
-  },
-  "logging": { "level": "info", "format": "text", "color": true, "verbose": false, "debug": false }
-}

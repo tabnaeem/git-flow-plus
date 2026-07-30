@@ -3,12 +3,8 @@
 /dist/
 *.exe
 *.test
-*.msi
-*.wixpdb
 *.pkg
-
-# WiX Toolset local extension cache (created by `wix extension add`)
-/.wix/
+*.syso
 
 # Coverage
 *.out

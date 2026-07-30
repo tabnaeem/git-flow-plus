@@ -4,37 +4,24 @@ How to move an existing Git Flow Plus install to a newer version, and
 how to remove it entirely — by platform and install method. In every
 case, your data is preserved: no upgrade or uninstall path deletes a
 repository's `.gitflowplus/` directory (that's just files in your own
-repo) or the seeded config/logs directories described in
-[WindowsInstallation.md](WindowsInstallation.md#seeded-files)/
-[Packaging.md](Packaging.md#macos-pkg).
+repo), and on macOS the seeded config directory described in
+[Packaging.md](Packaging.md#macos-pkg) is left untouched.
 
-## Windows — `.exe` installer
+## Windows
 
-Just run the new version's installer. It detects the existing install
-(via its own installer ID, regardless of version) and **silently
-uninstalls it first**, before laying down the new files — verified
-behavior, not a theoretical claim; see
-[Packaging.md](Packaging.md#the-exe-installer). No separate uninstall
-step needed, and your `PATH` entry, seeded config, and logs directory
-all survive untouched.
+Just run the new version's installer
+(`GitFlowPlusSetup_v<new-version>_x64.exe`). Its `.onInit` looks up the
+existing install's own Add/Remove Programs registry entry (regardless
+of version) and, after a confirmation prompt (skipped under `/S`),
+**silently uninstalls it first**, before laying down the new files —
+see [Packaging.md#upgrade-detection](Packaging.md#upgrade-detection).
+No separate uninstall step needed, and your `PATH` entry and Start Menu
+shortcut are recreated by the new install.
 
 To uninstall entirely instead of upgrading, see
 [WindowsInstallation.md#silent-uninstall](WindowsInstallation.md#silent-uninstall)
 or use **Settings → Apps → Git Flow Plus → Uninstall** for the
 interactive route.
-
-## Windows — `.msi`
-
-MSI's native `MajorUpgrade` mechanism handles this — installing a newer
-`.msi` automatically removes the older one first, same as the `.exe`.
-No manual uninstall step:
-
-```powershell
-msiexec /i git-flow-plus-<new-version>-windows-x64.msi /quiet /norestart
-```
-
-To remove entirely: `msiexec /x git-flow-plus-<version>-windows-x64.msi /quiet /norestart`,
-or **Settings → Apps**.
 
 ## Linux — `.deb`/`.rpm`
 
@@ -92,14 +79,11 @@ with `git flow doctor` to confirm nothing else regressed.
 
 ## Downgrading
 
-Not a supported path on any platform — Windows' MSI explicitly refuses
-a downgrade (`DowngradeErrorMessage` in
-[installer/windows/gitflowplus.wxs](installer/windows/gitflowplus.wxs)),
-and the Inno `.exe`/`.deb`/`.rpm`/`.pkg` installers don't check version
-order at all, so installing an older version over a newer one works
-mechanically but isn't tested or recommended. If you need an older
-version, uninstall first, then install the old one from its own release
-page.
+Not a supported path on any platform — none of the installers (NSIS
+`.exe`, `.deb`/`.rpm`, `.pkg`) check version order, so installing an
+older version over a newer one works mechanically but isn't tested or
+recommended. If you need an older version, uninstall first, then
+install the old one from its own release page.
 
 ## See also
 

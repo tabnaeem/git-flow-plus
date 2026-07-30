@@ -6,7 +6,7 @@ to the deeper guide for that install method.
 
 | Platform | Recommended | Also available |
 |---|---|---|
-| Windows | [Installer (.exe)](WindowsInstallation.md) | Optional MSI, or a raw `.zip` |
+| Windows | [Installer (.exe)](WindowsInstallation.md) | Raw `.zip` |
 | Linux | `.deb` / `.rpm` package | Raw `.tar.gz` |
 | macOS | `.pkg` installer | Raw `.tar.gz` |
 
@@ -17,19 +17,16 @@ pipeline the moment a version tag is pushed — see
 
 ## Windows
 
-The full writeup, including silent install/uninstall, per-user vs.
-machine-wide, and PATH details, is in
+The full writeup, including the wizard pages, silent install/uninstall,
+and PATH details, is in
 [WindowsInstallation.md](WindowsInstallation.md). Quick version:
 
-1. Download `git-flow-plus-<version>-windows-<x64|arm64>-setup.exe` from
-   the latest release.
-2. Run it. The installer detects Git, adds Git Flow Plus to `PATH`, and
-   offers to run `git flow doctor` at the end to confirm everything
-   works.
-
-An optional `.msi` is also published, for teams deploying via Group
-Policy/SCCM/Intune — see
-[WindowsInstallation.md#msi-enterprise-deployment](WindowsInstallation.md#msi-enterprise-deployment).
+1. Download `GitFlowPlusSetup_v<version>_x64.exe` from the latest
+   release.
+2. Run it (elevation required — it always installs machine-wide to
+   `C:\Program Files\Git Flow Plus`). The wizard adds Git Flow Plus to
+   `PATH` and offers to run `git flow doctor` at the end to confirm
+   everything works.
 
 ## Linux
 

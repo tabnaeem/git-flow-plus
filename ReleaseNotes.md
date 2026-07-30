@@ -13,18 +13,27 @@ starting changelog rather than a single undifferentiated diff.
 A complete, professional install/release pipeline across all three
 platforms, first-priority Windows:
 
-- **Windows installer** (Inno Setup, `installer/windows/gitflowplus.iss`):
-  silent install/uninstall, per-user or machine-wide, automatic PATH
-  management (verified end-to-end against a real ~1,800-character PATH
-  with 40+ existing entries — installed, `doctor` all green, uninstalled,
-  PATH restored byte-for-byte), Git/Git Bash/PowerShell detection,
+- **Windows installer** (NSIS, `build/windows/installer.nsi`, built via
+  `build/windows/create-installer.ps1`): a six-page modern wizard
+  (Welcome, License, install folder, components, install, finish)
+  installing machine-wide to `C:\Program Files\Git Flow Plus`, silent
+  install/uninstall (`/S`), automatic PATH management (hand-rolled — no
+  bundled NSIS plugin does this — verified via a dedicated unelevated
+  test harness that caught and fixed a real separator-loss bug in the
+  middle-of-list removal case before it ever reached a real install),
   automatic detection-and-silent-removal of a prior install on upgrade,
-  and a seeded default configuration under `%APPDATA%`.
-- **Optional Windows MSI** (WiX v6, `installer/windows/gitflowplus.wxs`)
-  for Group Policy/SCCM/Intune deployment — per-machine, native
-  `MajorUpgrade` handling, MSI-table-level-verified PATH management.
-  Deliberately pinned to WiX v6, not v7, which gates its CLI behind a
-  paid Open Source Maintenance Fee EULA.
+  Add/Remove Programs registration, and an embedded icon/version
+  resource (via `go-winres`) in `git-flow-plus.exe` itself, not just the
+  installer wrapper. Replaces the project's earlier Inno Setup/WiX
+  prototype.
+- **Release pipeline hardening**: GitHub Releases are treated as
+  immutable (no `--clobber` on any upload step, plus an early workflow
+  guard that refuses to re-publish an already-existing tag), builds are
+  reproducible (`{{ .CommitDate }}`, not wall-clock time, feeds the
+  embedded build date), every release archive ships a per-artifact
+  Software Bill of Materials (SBOM, CycloneDX/SPDX via `syft`), and
+  every archive/package/SBOM gets a signed GitHub build-provenance
+  attestation (`actions/attest-build-provenance@v2`).
 - **Linux `.deb`/`.rpm`** via GoReleaser's `nfpm` integration, including
   a `git-flow` symlink so `git flow ...` resolves as a Git subcommand.
 - **macOS `.pkg`** (`scripts/package-macos-pkg.sh`): a universal
@@ -40,7 +49,7 @@ platforms, first-priority Windows:
   `git flow ...` will actually work as a Git subcommand), Git Flow
   Plus's own build version, and whether a release is in progress.
 - **`.github/workflows/release.yml` rewrite**: three coordinated jobs
-  (GoReleaser on Linux; the Windows installer/MSI; the macOS `.pkg`),
+  (GoReleaser on Linux; the Windows NSIS installer; the macOS `.pkg`),
   triggered by the same `v*` tag push as before, publishing everything
   to one GitHub Release.
 - **LICENSE added** (MIT) — required for `.deb`/`.rpm` packaging

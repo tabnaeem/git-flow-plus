@@ -51,13 +51,23 @@ when.
   gofmt, lint) and `release.yml` (test, lint, `goreleaser release`, plus
   dedicated Windows-installer and macOS-`.pkg` jobs, all attached to a
   GitHub Release on a `v*` tag push). See [Building.md](Building.md).
-- **Windows installer** (Inno Setup, optional WiX MSI), Linux
-  `.deb`/`.rpm` (via GoReleaser's `nfpm` integration), and a macOS
-  `.pkg` — silent install/uninstall, PATH registration (including the
-  `git-flow` alias `git flow ...` needs to resolve as a Git subcommand),
-  upgrade/reinstall detection, and Git/Git Bash/PowerShell detection on
-  Windows. See [WindowsInstallation.md](WindowsInstallation.md) and
+- **Windows installer** (NSIS, `GitFlowPlusSetup_v<version>_x64.exe`),
+  Linux `.deb`/`.rpm` (via GoReleaser's `nfpm` integration), and a
+  macOS `.pkg` — silent install/uninstall, PATH registration (including
+  the `git-flow` alias `git flow ...` needs to resolve as a Git
+  subcommand), and upgrade/reinstall detection. See
+  [WindowsInstallation.md](WindowsInstallation.md) and
   [Packaging.md](Packaging.md).
+- **Release pipeline hardening**: GitHub Releases are treated as
+  immutable (no `--clobber`, plus an early guard that refuses to
+  re-publish an already-existing tag), builds are reproducible (derived
+  from the commit being built, not wall-clock time), every archive ships
+  a per-artifact Software Bill of Materials (SBOM, via `syft`), and
+  every archive/package/SBOM gets a signed GitHub build-provenance
+  attestation. See
+  [ReleaseProcess.md](ReleaseProcess.md#before-the-pipeline-runs-at-all-the-tag-exists-guard)
+  and
+  [Packaging.md#release-integrity-sbom-and-reproducible-builds](Packaging.md#release-integrity-sbom-and-reproducible-builds).
 
 ## Deliberately out of scope (for now)
 
@@ -93,8 +103,8 @@ Roughly in the order they'd likely be tackled, none currently scheduled:
    named manifests.
 2. **Package-manager installers**: Homebrew, Chocolatey, and Scoop, so
    installing is a one-line command rather than downloading an archive
-   or running an installer — `.deb`, `.rpm`, and an optional Windows MSI
-   are already implemented (see [Packaging.md](Packaging.md)).
+   or running an installer — `.deb` and `.rpm` are already implemented
+   (see [Packaging.md](Packaging.md)).
 3. **Follow-up-commit notification**: some way to surface "this
    already-merged feature branch has new commits" (e.g. as part of
    `release feature status` or `doctor`) so a Release Manager doesn't have
