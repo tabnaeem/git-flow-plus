@@ -8,6 +8,29 @@ starting changelog rather than a single undifferentiated diff.
 
 ## Unreleased
 
+### `git flow release status` (this milestone)
+
+Rewrote `git flow release status` from a flat label/value dump into a
+full, sectioned human-readable report — Sprint/Features/Release Fixes/
+DevOps/QA Build counts, per-feature and per-release-fix Included/
+Deferred/Pending state, the QA build history (with the current build
+marked), and a Release Readiness checklist ending in a plain "READY FOR
+PRODUCTION RELEASE"/"NOT READY FOR PRODUCTION" verdict. Added `--json`
+for the same data in machine-readable form (`release`, `sprint`,
+`features`, `release_fixes`, `devops`, `qa_build`, `status`), matching
+the pattern already established by `config list --json`.
+
+Entirely additive at the data layer: `release.StatusReport` gained two
+new fields (`VersionInfo`, `Builds`) populated from data `Status()`
+already loaded (the version and the manifest's build history) — no
+change to `release.Service`'s interface, no new persisted state, and no
+change to the branching/tagging/versioning behavior any other command
+relies on. Readiness is computed live from the manifest's existing
+Pending lists; Git Flow Plus still tracks no "QA complete" or
+"production approved" flag, so those two rows are always shown
+in-progress/pending for an active release, by design — see
+[CommandReference.md#git-flow-release-status](CommandReference.md#git-flow-release-status).
+
 ### Installation and distribution system (this milestone)
 
 A complete, professional install/release pipeline across all three

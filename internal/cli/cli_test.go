@@ -291,7 +291,7 @@ func TestReleaseStatusVersionManifestAfterStart(t *testing.T) {
 	if err := run(t, app, "release", "status"); err != nil {
 		t.Fatalf("run(release status) error = %v", err)
 	}
-	for _, want := range []string{"5.2", "5.2.0.0.1", "QA Build:", "1"} {
+	for _, want := range []string{"Git Flow Plus Release Status", "5.2", "5.2.0.0.1", "QA Builds:", "Release Readiness"} {
 		if !bytes.Contains(out.Bytes(), []byte(want)) {
 			t.Errorf("release status output = %q, want it to contain %q", out.String(), want)
 		}
@@ -315,6 +315,198 @@ func TestReleaseStatusVersionManifestAfterStart(t *testing.T) {
 	}
 	if m["release"] != "5.2" {
 		t.Errorf("manifest[release] = %v, want %q", m["release"], "5.2")
+	}
+}
+
+// TestReleaseStatusJSONNoActiveRelease covers "no active release" for
+// --json specifically: there is no release to report numeric fields for,
+// so the shape is intentionally smaller than the active-release one (see
+// printReleaseStatusJSON) rather than zero-valued fields that would be
+// indistinguishable from a genuinely-zero active release.
+func TestReleaseStatusJSONNoActiveRelease(t *testing.T) {
+	app, out, _ := testApp(t)
+	mustRun(t, app, "init")
+	out.Reset()
+
+	if err := run(t, app, "release", "status", "--json"); err != nil {
+		t.Fatalf("run(release status --json) error = %v", err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("release status --json output is not valid JSON: %v (%q)", err, out.String())
+	}
+	if got["status"] != "no_release" {
+		t.Errorf(`json "status" = %v, want "no_release"`, got["status"])
+	}
+	if active, ok := got["active"].(bool); !ok || active {
+		t.Errorf(`json "active" = %v, want false`, got["active"])
+	}
+	if _, present := got["release"]; present {
+		t.Errorf("json has a \"release\" field with no active release: %v", got)
+	}
+}
+
+// TestReleaseStatusReportsFeaturesFixesDevOpsAndBuilds drives a release
+// through features (one included, one still pending a Release Planning
+// decision), a release fix and a DevOps change (merged but pending a QA
+// build), then a build — checking `release status`'s plain-text sections
+// and its --json readiness verdict both before and after the build. This
+// is the "pending approval" (not_ready) / "ready release" pair, plus
+// feature/fix/DevOps/QA-build coverage, all from one realistic lifecycle.
+func TestReleaseStatusReportsFeaturesFixesDevOpsAndBuilds(t *testing.T) {
+	app, out, _ := testApp(t)
+	mustRun(t, app, "init")
+	mustRun(t, app, "release", "start", "5.2")
+
+	mustRun(t, app, "feature", "start", "LOGIN")
+	writeFileAndCommit(t, app.RepoPath, "login.go", "package login", "Implement LOGIN")
+	mustRun(t, app, "release", "feature", "approve", "LOGIN")
+
+	mustRun(t, app, "feature", "start", "REPORT")
+	writeFileAndCommit(t, app.RepoPath, "report.go", "package report", "Implement REPORT")
+	mustRun(t, app, "release", "feature", "approve", "REPORT")
+
+	// LOGIN is added (Included); REPORT stays approved-but-undecided
+	// (Pending) — adding LOGIN is also what re-materializes the manifest's
+	// derived Pending set, so REPORT shows up correctly.
+	mustRun(t, app, "release", "feature", "add", "LOGIN")
+
+	mustRun(t, app, "releasefix", "start", "FIX-101")
+	writeFileAndCommit(t, app.RepoPath, "fix101.txt", "fixed", "Fix FIX-101")
+	mustRun(t, app, "releasefix", "finish", "FIX-101")
+
+	mustRun(t, app, "devops", "start", "REDIS")
+	writeFileAndCommit(t, app.RepoPath, "redis.yaml", "config", "Add redis config")
+	mustRun(t, app, "devops", "finish", "REDIS")
+
+	// --- stage 1 (pre-build): fix/devops merged but still pending a build,
+	// REPORT approved but still pending a Release Planning decision ---
+	out.Reset()
+	if err := run(t, app, "release", "status"); err != nil {
+		t.Fatalf("run(release status) error = %v", err)
+	}
+	for _, want := range []string{
+		"✓ LOGIN", "Included",
+		"○ REPORT", "Pending",
+		"○ FIX-101",
+		"→ Build #1 Current",
+		"NOT READY FOR PRODUCTION",
+	} {
+		if !bytes.Contains(out.Bytes(), []byte(want)) {
+			t.Errorf("release status output (stage 1) = %q, want it to contain %q", out.String(), want)
+		}
+	}
+
+	out.Reset()
+	if err := run(t, app, "release", "status", "--json"); err != nil {
+		t.Fatalf("run(release status --json) error = %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("release status --json output is not valid JSON: %v (%q)", err, out.String())
+	}
+	if got["status"] != "not_ready" {
+		t.Errorf(`json "status" (stage 1) = %v, want "not_ready"`, got["status"])
+	}
+	if got["release_fixes"] != float64(0) {
+		t.Errorf(`json "release_fixes" (stage 1) = %v, want 0 (FIX-101 is merged but not yet built)`, got["release_fixes"])
+	}
+
+	// --- stage 2 (post-build): the fix/devops change are folded in and QA
+	// build #2 is cut, but REPORT is still an undecided pending feature -
+	// readiness must still say NOT READY, on that basis alone ---
+	mustRun(t, app, "release", "build")
+
+	out.Reset()
+	if err := run(t, app, "release", "status"); err != nil {
+		t.Fatalf("run(release status) error = %v", err)
+	}
+	for _, want := range []string{
+		"✓ FIX-101",
+		"✓ Build #1",
+		"→ Build #2",
+		"Current",
+		"Release Fixes         ✓",
+		"DevOps Changes        ✓",
+		"○ REPORT", "Pending",
+		"NOT READY FOR PRODUCTION",
+	} {
+		if !bytes.Contains(out.Bytes(), []byte(want)) {
+			t.Errorf("release status output (stage 2) = %q, want it to contain %q", out.String(), want)
+		}
+	}
+
+	out.Reset()
+	if err := run(t, app, "release", "status", "--json"); err != nil {
+		t.Fatalf("run(release status --json) error = %v", err)
+	}
+	got = map[string]any{}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("release status --json output is not valid JSON: %v (%q)", err, out.String())
+	}
+	if got["status"] != "not_ready" {
+		t.Errorf(`json "status" (stage 2) = %v, want "not_ready" (REPORT is still a pending feature)`, got["status"])
+	}
+	if got["release_fixes"] != float64(1) {
+		t.Errorf(`json "release_fixes" (stage 2) = %v, want 1`, got["release_fixes"])
+	}
+	if got["devops"] != float64(1) {
+		t.Errorf(`json "devops" (stage 2) = %v, want 1`, got["devops"])
+	}
+	if got["qa_build"] != float64(2) {
+		t.Errorf(`json "qa_build" (stage 2) = %v, want 2`, got["qa_build"])
+	}
+	if got["sprint"] != float64(5) {
+		t.Errorf(`json "sprint" (stage 2) = %v, want 5`, got["sprint"])
+	}
+
+	// --- stage 3 (ready release): resolving the last pending decision
+	// (defer REPORT) clears every readiness gate that can be cleared ---
+	mustRun(t, app, "release", "feature", "defer", "REPORT")
+
+	out.Reset()
+	if err := run(t, app, "release", "status"); err != nil {
+		t.Fatalf("run(release status) error = %v", err)
+	}
+	for _, want := range []string{
+		"○ REPORT", "Deferred",
+		"Features              ✓",
+		"READY FOR PRODUCTION RELEASE",
+	} {
+		if !bytes.Contains(out.Bytes(), []byte(want)) {
+			t.Errorf("release status output (stage 3) = %q, want it to contain %q", out.String(), want)
+		}
+	}
+
+	out.Reset()
+	if err := run(t, app, "release", "status", "--json"); err != nil {
+		t.Fatalf("run(release status --json) error = %v", err)
+	}
+	got = map[string]any{}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("release status --json output is not valid JSON: %v (%q)", err, out.String())
+	}
+	if got["status"] != "ready" {
+		t.Errorf(`json "status" (stage 3) = %v, want "ready"`, got["status"])
+	}
+}
+
+// TestReleaseStatusErrorsOnCorruptManifest covers the "invalid/missing
+// state" case at the CLI level: a release.json that isn't valid JSON must
+// fail the command, not print a blank or zero-valued report.
+func TestReleaseStatusErrorsOnCorruptManifest(t *testing.T) {
+	app, _, _ := testApp(t)
+	mustRun(t, app, "init")
+	mustRun(t, app, "release", "start", "5.2")
+
+	manifestPath := filepath.Join(app.RepoPath, config.DirName, "release.json")
+	if err := os.WriteFile(manifestPath, []byte("{not valid json"), 0o644); err != nil {
+		t.Fatalf("writing corrupt release.json: %v", err)
+	}
+
+	if err := run(t, app, "release", "status"); err == nil {
+		t.Fatal("run(release status) with a corrupt release.json = nil error, want failure")
 	}
 }
 

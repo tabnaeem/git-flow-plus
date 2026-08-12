@@ -189,15 +189,87 @@ git flow release finish 5.2
 
 ## `git flow release status`
 
-Reports the release active on `staging` — release name, branch, version,
-QA build number, included/pending release fixes and DevOps changes,
-included/deferred/pending features, and open `release-fix`/
-`release-devops` branches. If no release is active: "No active release on
-staging."
+Prints a full human-readable summary of the release active on `staging`:
+the version's Sprint/Features/Release Fixes/DevOps/QA Build counts, every
+feature and release fix (Included/Deferred/Pending), the QA build
+history, and a Release Readiness checklist. If no release is active:
+"No active release on staging."
 
 ```bash
 git flow release status
 ```
+
+```
+Git Flow Plus Release Status
+──────────────────────────────────────
+
+Release:       v5.2.1.1.2
+Sprint:        5
+Features:      2
+Release Fixes: 1
+DevOps:        1
+QA Builds:     2
+
+Features
+──────────────────────────────────────
+
+✓ LOGIN        Included
+○ REPORT       Pending
+
+Release Fixes
+──────────────────────────────────────
+
+✓ FIX-101
+
+QA
+──────────────────────────────────────
+
+✓ Build #1
+→ Build #2 Current
+
+Release Readiness
+──────────────────────────────────────
+
+Features              ○ Pending (1)
+Release Fixes         ✓
+DevOps Changes        ✓
+QA                    → Build #2 in progress
+Production Release    ○ Pending (run 'git flow release finish')
+
+Status:
+NOT READY FOR PRODUCTION
+```
+
+Readiness is computed purely from what release.json already tracks:
+Features/Release Fixes/DevOps Changes turn `✓` the moment nothing is left
+`Pending`. QA and Production Release are always shown "in progress"/
+"Pending" — Git Flow Plus records no "QA complete" or "production
+approved" flag anywhere, and an active release is by definition one
+`release finish` hasn't run for yet (that command archives and removes
+the manifest `status` reads).
+
+### `--json`
+
+```bash
+git flow release status --json
+```
+
+```json
+{
+  "release": "v5.2.1.1.2",
+  "sprint": 5,
+  "features": 2,
+  "release_fixes": 1,
+  "devops": 1,
+  "qa_build": 2,
+  "status": "not_ready"
+}
+```
+
+`status` is `"ready"` once Features/Release Fixes/DevOps Changes have
+nothing pending, `"not_ready"` otherwise, or `"no_release"` (with just
+`{"active": false, "status": "no_release"}`, since there's no release to
+report the other fields for) if `staging` has no active release.
 
 ---
 

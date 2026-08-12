@@ -196,6 +196,9 @@ git flow releasefix finish BUG-101     # merges into staging (branch stays alive
 
 git flow release build                 # only this changes Fixes/DevOps/QA: 5.3.1.0.2, tags v5.3.1.0.2
 
+git flow release status                # full summary: version, features/fixes/DevOps, QA builds, readiness
+git flow release status --json         # same, machine-readable
+
 git flow release finish 5.2            # staging -> main (develop untouched), tags v5.2 (production)
                                         # LOGIN is now permanently Released; feature/LOGIN and
                                         # release-fix/BUG-101 are deleted — only now, not before

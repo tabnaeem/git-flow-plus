@@ -49,6 +49,8 @@ func (s *service) Status(ctx context.Context) (StatusReport, error) {
 		PendingFeatures:        m.Features.Pending,
 		OpenReleaseFixBranches: fixBranches,
 		OpenDevOpsBranches:     devopsBranches,
+		VersionInfo:            *v,
+		Builds:                 m.History,
 	}, nil
 }
 

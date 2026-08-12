@@ -1,5 +1,7 @@
 package release
 
+import "github.com/tabnaeem/git-flow-plus/internal/version"
+
 // StartResult describes the outcome of starting a release.
 type StartResult struct {
 	Release string
@@ -58,6 +60,21 @@ type StatusReport struct {
 	PendingFeatures        []string
 	OpenReleaseFixBranches []string
 	OpenDevOpsBranches     []string
+	// VersionInfo is the same version Version reflects (Version is just its
+	// formatted string), broken out into its individual Sprint/Release
+	// (feature counter)/Fixes/DevOps/QA fields — for `release status`'s
+	// numeric summary. Named VersionInfo, not Version, since StatusReport
+	// already has a Version string field with different meaning (the
+	// formatted "Sprint.Release.Fixes.DevOps.QA" string) and version.Version
+	// already has its own Release field (the feature counter) that would
+	// otherwise collide with StatusReport.Release (the release *name*, e.g.
+	// "5.2").
+	VersionInfo version.Version
+	// Builds is the active release's QA build history — one entry per `git
+	// flow release build` (plus the initial build release start creates) —
+	// for `release status`'s QA section. The same data already recorded in
+	// Manifest.History; StatusReport did not previously expose it.
+	Builds []BuildRecord
 }
 
 // FeatureStatusReport is the picture of the Feature Registry relative to

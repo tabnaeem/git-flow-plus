@@ -19,3 +19,4 @@ Thumbs.db
 # Local Git Flow Plus metadata created while testing the CLI
 /.gitflowplus/
 /.claude/
+/presentation
