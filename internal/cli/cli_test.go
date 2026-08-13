@@ -510,6 +510,250 @@ func TestReleaseStatusErrorsOnCorruptManifest(t *testing.T) {
 	}
 }
 
+// --- release validate ---
+
+// 1. Valid release.
+func TestReleaseValidatePassesForFreshRelease(t *testing.T) {
+	app, out, _ := testApp(t)
+	mustRun(t, app, "init")
+	mustRun(t, app, "release", "start", "5.2")
+	out.Reset()
+
+	if err := run(t, app, "release", "validate"); err != nil {
+		t.Fatalf("run(release validate) on a fresh release = error %v, want nil", err)
+	}
+	for _, want := range []string{
+		"Release validation passed.",
+		"✓ Release exists",
+		"✓ Features finalized",
+		"✓ Release fixes finalized",
+		"✓ QA status valid",
+		"✓ Version valid",
+		"✓ Working tree clean",
+		"Release is ready.",
+	} {
+		if !bytes.Contains(out.Bytes(), []byte(want)) {
+			t.Errorf("release validate output = %q, want it to contain %q", out.String(), want)
+		}
+	}
+}
+
+// 2. Missing release.
+func TestReleaseValidateFailsWithNoActiveRelease(t *testing.T) {
+	app, out, _ := testApp(t)
+	mustRun(t, app, "init")
+	out.Reset()
+
+	err := run(t, app, "release", "validate")
+	if err == nil {
+		t.Fatal("run(release validate) with no active release = nil error, want failure")
+	}
+	for _, want := range []string{"Release validation failed.", "No active release", "Release cannot be finalized."} {
+		if !bytes.Contains(out.Bytes(), []byte(want)) {
+			t.Errorf("release validate output = %q, want it to contain %q", out.String(), want)
+		}
+	}
+}
+
+// 3. Pending feature.
+func TestReleaseValidateFailsWithPendingFeature(t *testing.T) {
+	app, out, _ := testApp(t)
+	mustRun(t, app, "init")
+	mustRun(t, app, "release", "start", "5.2")
+
+	mustRun(t, app, "feature", "start", "REPORT")
+	writeFileAndCommit(t, app.RepoPath, "report.go", "package report", "Implement REPORT")
+	mustRun(t, app, "release", "feature", "approve", "REPORT")
+	// Approved, but never added or deferred - stays Pending. Approving
+	// alone doesn't re-materialize the manifest's derived Pending set
+	// (only add/defer do - see release.pendingFeatureIDs), so add a
+	// second, unrelated feature to trigger that recompute, the same way a
+	// real Release Manager's first `add` naturally surfaces every other
+	// approved-but-undecided feature.
+	mustRun(t, app, "feature", "start", "LOGIN")
+	writeFileAndCommit(t, app.RepoPath, "login.go", "package login", "Implement LOGIN")
+	mustRun(t, app, "release", "feature", "approve", "LOGIN")
+	mustRun(t, app, "release", "feature", "add", "LOGIN")
+
+	out.Reset()
+	if err := run(t, app, "release", "validate"); err == nil {
+		t.Fatal("run(release validate) with a pending feature = nil error, want failure")
+	}
+	if !bytes.Contains(out.Bytes(), []byte("REPORT")) {
+		t.Errorf("release validate output = %q, want it to mention REPORT", out.String())
+	}
+}
+
+// 4. Unapproved feature (registry/manifest drift). AddFeatureToRelease
+// never lets a manifest include a feature that isn't at least Approved in
+// the registry, so this can only be reached by simulating drift directly
+// - the same technique TestReleaseStatusErrorsOnCorruptManifest uses for
+// its own corruption scenario.
+func TestReleaseValidateFailsWhenIncludedFeatureNotApprovedInRegistry(t *testing.T) {
+	app, out, _ := testApp(t)
+	mustRun(t, app, "init")
+	mustRun(t, app, "release", "start", "5.2")
+
+	mustRun(t, app, "feature", "start", "LOGIN")
+	writeFileAndCommit(t, app.RepoPath, "login.go", "package login", "Implement LOGIN")
+	mustRun(t, app, "release", "feature", "approve", "LOGIN")
+	mustRun(t, app, "release", "feature", "add", "LOGIN")
+
+	// Simulate drift: downgrade LOGIN's registry state back to Created,
+	// leaving release.json's Features.Included = ["LOGIN"] untouched.
+	registryPath := filepath.Join(app.RepoPath, config.DirName, "features.json")
+	driftedRegistry := `{"features":[{"id":"LOGIN","branch":"feature/LOGIN","mergeCommit":"","state":"Created","release":""}]}`
+	if err := os.WriteFile(registryPath, []byte(driftedRegistry), 0o644); err != nil {
+		t.Fatalf("writing drifted features.json: %v", err)
+	}
+
+	out.Reset()
+	if err := run(t, app, "release", "validate"); err == nil {
+		t.Fatal("run(release validate) with registry/manifest drift = nil error, want failure")
+	}
+	if !bytes.Contains(out.Bytes(), []byte("LOGIN")) {
+		t.Errorf("release validate output = %q, want it to mention LOGIN", out.String())
+	}
+}
+
+// 5. Pending release fix.
+func TestReleaseValidateFailsWithPendingReleaseFix(t *testing.T) {
+	app, out, _ := testApp(t)
+	mustRun(t, app, "init")
+	mustRun(t, app, "release", "start", "5.2")
+
+	mustRun(t, app, "releasefix", "start", "FIX-101")
+	writeFileAndCommit(t, app.RepoPath, "fix101.txt", "fixed", "Fix FIX-101")
+	mustRun(t, app, "releasefix", "finish", "FIX-101")
+
+	out.Reset()
+	if err := run(t, app, "release", "validate"); err == nil {
+		t.Fatal("run(release validate) with a pending release fix = nil error, want failure")
+	}
+	if !bytes.Contains(out.Bytes(), []byte("FIX-101")) {
+		t.Errorf("release validate output = %q, want it to mention FIX-101", out.String())
+	}
+}
+
+// 6. Invalid QA state: version.json's QA counter and release.json's build
+// history have drifted apart (e.g. an interrupted build).
+func TestReleaseValidateFailsOnQABuildHistoryMismatch(t *testing.T) {
+	app, out, _ := testApp(t)
+	mustRun(t, app, "init")
+	mustRun(t, app, "release", "start", "5.2")
+
+	versionPath := filepath.Join(app.RepoPath, config.DirName, "version.json")
+	if err := os.WriteFile(versionPath, []byte(`{"sprint":5,"release":2,"fixes":0,"devops":0,"qa":2}`), 0o644); err != nil {
+		t.Fatalf("writing drifted version.json: %v", err)
+	}
+
+	out.Reset()
+	if err := run(t, app, "release", "validate"); err == nil {
+		t.Fatal("run(release validate) with a QA history/version mismatch = nil error, want failure")
+	}
+	if !bytes.Contains(out.Bytes(), []byte("QA build #1")) {
+		t.Errorf("release validate output = %q, want it to mention the mismatched build", out.String())
+	}
+}
+
+// 7. Invalid version.
+func TestReleaseValidateFailsOnInvalidVersionField(t *testing.T) {
+	app, out, _ := testApp(t)
+	mustRun(t, app, "init")
+	mustRun(t, app, "release", "start", "5.2")
+
+	versionPath := filepath.Join(app.RepoPath, config.DirName, "version.json")
+	if err := os.WriteFile(versionPath, []byte(`{"sprint":5,"release":2,"fixes":0,"devops":0,"qa":0}`), 0o644); err != nil {
+		t.Fatalf("writing invalid version.json: %v", err)
+	}
+
+	out.Reset()
+	if err := run(t, app, "release", "validate"); err == nil {
+		t.Fatal("run(release validate) with QA=0 = nil error, want failure")
+	}
+	if !bytes.Contains(out.Bytes(), []byte("must be at least 1")) {
+		t.Errorf("release validate output = %q, want it to explain the invalid QA field", out.String())
+	}
+}
+
+// 8. Dirty working tree.
+func TestReleaseValidateFailsWithDirtyWorkingTree(t *testing.T) {
+	app, out, _ := testApp(t)
+	mustRun(t, app, "init")
+	mustRun(t, app, "release", "start", "5.2")
+
+	if err := os.WriteFile(filepath.Join(app.RepoPath, "uncommitted.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("writing uncommitted file: %v", err)
+	}
+
+	out.Reset()
+	if err := run(t, app, "release", "validate"); err == nil {
+		t.Fatal("run(release validate) with an uncommitted change = nil error, want failure")
+	}
+	if !bytes.Contains(out.Bytes(), []byte("uncommitted changes")) {
+		t.Errorf("release validate output = %q, want it to mention uncommitted changes", out.String())
+	}
+}
+
+// 9. Existing release tag.
+func TestReleaseValidateFailsWhenReleaseTagAlreadyExists(t *testing.T) {
+	app, out, _ := testApp(t)
+	mustRun(t, app, "init")
+	mustRun(t, app, "release", "start", "5.2")
+
+	if err := app.GitClient().Tag(context.Background(), "v5.2", "premature manual tag"); err != nil {
+		t.Fatalf("creating tag v5.2: %v", err)
+	}
+
+	out.Reset()
+	if err := run(t, app, "release", "validate"); err == nil {
+		t.Fatal("run(release validate) with tag v5.2 already existing = nil error, want failure")
+	}
+	if !bytes.Contains(out.Bytes(), []byte("v5.2")) {
+		t.Errorf("release validate output = %q, want it to mention the existing tag", out.String())
+	}
+}
+
+// 10. Multiple validation failures reported independently, not collapsed
+// into one generic error.
+func TestReleaseValidateReportsMultipleFailures(t *testing.T) {
+	app, out, _ := testApp(t)
+	mustRun(t, app, "init")
+	mustRun(t, app, "release", "start", "5.2")
+
+	mustRun(t, app, "feature", "start", "REPORT")
+	writeFileAndCommit(t, app.RepoPath, "report.go", "package report", "Implement REPORT")
+	mustRun(t, app, "release", "feature", "approve", "REPORT")
+	// See TestReleaseValidateFailsWithPendingFeature: needs a second
+	// feature's `add` to re-materialize REPORT into Features.Pending.
+	mustRun(t, app, "feature", "start", "LOGIN")
+	writeFileAndCommit(t, app.RepoPath, "login.go", "package login", "Implement LOGIN")
+	mustRun(t, app, "release", "feature", "approve", "LOGIN")
+	mustRun(t, app, "release", "feature", "add", "LOGIN")
+
+	mustRun(t, app, "releasefix", "start", "FIX-101")
+	writeFileAndCommit(t, app.RepoPath, "fix101.txt", "fixed", "Fix FIX-101")
+	mustRun(t, app, "releasefix", "finish", "FIX-101")
+
+	if err := os.WriteFile(filepath.Join(app.RepoPath, "uncommitted.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("writing uncommitted file: %v", err)
+	}
+
+	out.Reset()
+	if err := run(t, app, "release", "validate"); err == nil {
+		t.Fatal("run(release validate) with multiple problems = nil error, want failure")
+	}
+	for _, want := range []string{"REPORT", "FIX-101", "uncommitted changes"} {
+		if !bytes.Contains(out.Bytes(), []byte(want)) {
+			t.Errorf("release validate output = %q, want it to mention %q", out.String(), want)
+		}
+	}
+	// Each problem gets its own line, not one combined "failed" sentence.
+	if bytes.Count(out.Bytes(), []byte("✗")) < 3 {
+		t.Errorf("release validate output = %q, want at least 3 separate ✗ lines", out.String())
+	}
+}
+
 // --- releasefix / devops / build lifecycles ---
 
 func TestReleaseFixLifecycleViaCLI(t *testing.T) {

@@ -77,6 +77,31 @@ type StatusReport struct {
 	Builds []BuildRecord
 }
 
+// ValidationCheck is a single named pass/fail check performed by Validate.
+// Name is a short category label, shown on success ("✓ <Name>"). Detail is
+// a complete, specific sentence populated only when OK is false, shown
+// instead of Name on failure ("✗ <Detail>") — e.g. "Feature REPORT is
+// pending a Release Planning decision (approve and add, or defer, it)"
+// rather than a generic "Features finalized: failed".
+type ValidationCheck struct {
+	Name   string
+	OK     bool
+	Detail string
+}
+
+// ValidationReport is the full picture produced by `git flow release
+// validate`: every check performed, and whether the release as a whole is
+// ready for `git flow release finish`.
+type ValidationReport struct {
+	// Active is false when staging has no release.json, in which case
+	// Checks contains exactly one failing "Release exists" check and Ready
+	// is false.
+	Active bool
+	Checks []ValidationCheck
+	// Ready is true only if every check in Checks passed.
+	Ready bool
+}
+
 // FeatureStatusReport is the picture of the Feature Registry relative to
 // the active release, per `git flow release feature status`: which
 // features are approved (unit-tested and ready for release planning), and

@@ -8,6 +8,30 @@ starting changelog rather than a single undifferentiated diff.
 
 ## Unreleased
 
+### `git flow release validate` (this milestone)
+
+Added `git flow release validate`: a read-only pre-flight for `git flow
+release finish`, exiting non-zero on failure so it also works as a CI
+gate. It reuses exactly the guards `finish` itself already enforces
+(`ErrPendingChangesNotBuilt`'s pending-fix/DevOps check, the production
+tag-existence check) plus new structural-integrity checks against the
+manifest, version.json, and the Feature Registry — release branch
+existence, manifest field sanity, feature/release-fix/DevOps
+Included-vs-Pending state, QA build-history/version consistency, version
+field validity, working-tree cleanliness, and manifest/config branch
+agreement. On success it prints one `✓` line per check; on failure, only
+the specific problems found, one per line, each in plain language (e.g.
+"Feature REPORT is pending a Release Planning decision").
+
+No new persisted state: `release.Service` gained one new interface
+method (`Validate`) and a new `internal/release/validate.go`, entirely
+additive. Two of the requested checks describe concepts with no
+corresponding stored flag anywhere in Git Flow Plus (a "QA build
+approval," a general "required approvals" gate) — those are grounded in
+the closest real, derivable facts instead of new state; see
+[CommandReference.md#git-flow-release-validate](CommandReference.md#git-flow-release-validate)
+for the exact mapping.
+
 ### `git flow release status` (this milestone)
 
 Rewrote `git flow release status` from a flat label/value dump into a

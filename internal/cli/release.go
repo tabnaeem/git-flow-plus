@@ -73,6 +73,7 @@ func newReleaseCmd(app *App) *cobra.Command {
 			},
 		},
 		newReleaseStatusCmd(app),
+		newReleaseValidateCmd(app),
 		&cobra.Command{
 			Use:   "version",
 			Short: "Print the current Sprint.Release.Fix.DevOps.QAIteration version",
@@ -464,6 +465,66 @@ func statusHeadline(report release.StatusReport) string {
 		return "READY FOR PRODUCTION RELEASE"
 	}
 	return "NOT READY FOR PRODUCTION"
+}
+
+// newReleaseValidateCmd builds `git flow release validate`: a read-only
+// pre-flight for `git flow release finish`, backed by release.Service.
+// Validate() — the same checks FinishRelease itself enforces (plus a few
+// structural-integrity checks), reported proactively instead of failing
+// only once someone actually attempts to finish. Exits non-zero on
+// failure, so it doubles as a CI gate.
+func newReleaseValidateCmd(app *App) *cobra.Command {
+	return &cobra.Command{
+		Use:   "validate",
+		Short: "Check whether the current release is ready for 'git flow release finish'",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := app.LoadConfig()
+			if err != nil {
+				return err
+			}
+			report, err := app.ReleaseService(cfg).Validate(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return printReleaseValidation(app, report)
+		},
+	}
+}
+
+// printReleaseValidation renders a release.ValidationReport. On success,
+// every check's Name is printed as a "✓" line. On failure, only the
+// failing checks' Detail sentences are printed as "✗" lines — matching
+// the two-shape example this command's output was specified against —
+// and a non-nil error is returned so cobra reports a non-zero exit code.
+func printReleaseValidation(app *App, report release.ValidationReport) error {
+	if report.Ready {
+		lines := []string{"Release validation passed.", ""}
+		for _, c := range report.Checks {
+			lines = append(lines, fmt.Sprintf("✓ %s", c.Name))
+		}
+		lines = append(lines, "", "Release is ready.")
+		for _, l := range lines {
+			if err := app.Println(l); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	lines := []string{"Release validation failed.", ""}
+	for _, c := range report.Checks {
+		if !c.OK {
+			lines = append(lines, fmt.Sprintf("✗ %s", c.Detail))
+		}
+	}
+	lines = append(lines, "", "Release cannot be finalized.")
+	for _, l := range lines {
+		if err := app.Println(l); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("release validate: validation failed")
 }
 
 func formatList(items []string) string {

@@ -198,6 +198,7 @@ git flow release build                 # only this changes Fixes/DevOps/QA: 5.3.
 
 git flow release status                # full summary: version, features/fixes/DevOps, QA builds, readiness
 git flow release status --json         # same, machine-readable
+git flow release validate              # pre-flight for finish; non-zero exit on failure, usable as a CI gate
 
 git flow release finish 5.2            # staging -> main (develop untouched), tags v5.2 (production)
                                         # LOGIN is now permanently Released; feature/LOGIN and

@@ -68,6 +68,16 @@ type Service interface {
 
 	// Status reports the release active on staging, if any.
 	Status(ctx context.Context) (StatusReport, error)
+	// Validate checks whether the release active on staging is ready for
+	// FinishRelease: every check FinishRelease itself would enforce
+	// (pending release fixes/DevOps changes, the production tag not
+	// already existing), plus structural-integrity checks against the
+	// manifest, version, and Feature Registry. Read-only — it never
+	// mutates any state, and reports ErrNoActiveRelease-equivalent
+	// information via ValidationReport.Active rather than an error, so a
+	// missing release is a normal "not ready" result, not a failure to
+	// even run the check.
+	Validate(ctx context.Context) (ValidationReport, error)
 	// Manifest returns the active release's manifest.
 	Manifest(ctx context.Context) (*Manifest, error)
 	// Version returns the active release's version.

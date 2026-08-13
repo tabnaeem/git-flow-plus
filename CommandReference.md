@@ -273,6 +273,73 @@ report the other fields for) if `staging` has no active release.
 
 ---
 
+## `git flow release validate`
+
+A read-only pre-flight for `git flow release finish`: checks whether the
+release active on `staging` is actually ready to finish, reusing exactly
+the same guards `finish` itself enforces (pending release fixes/DevOps
+changes, the production tag not already existing) plus a handful of
+structural-integrity checks against the manifest, version, and Feature
+Registry. Never mutates anything. Exits non-zero on failure, so it also
+works as a CI gate before a scripted `release finish`.
+
+```bash
+git flow release validate
+```
+
+```
+Release validation passed.
+
+✓ Release exists
+✓ Release branch exists
+✓ Release state valid
+✓ Features finalized
+✓ Features approved
+✓ Release fixes finalized
+✓ DevOps changes finalized
+✓ QA status valid
+✓ Version valid
+✓ Working tree clean
+✓ Release tag available
+✓ No conflicting release state
+
+Release is ready.
+```
+
+On failure, only the specific problems found are printed — one line per
+problem, not a generic "some check failed":
+
+```
+Release validation failed.
+
+✗ Feature REPORT is pending a Release Planning decision (approve and add, or defer, it)
+✗ Release fix FIX-101 has been merged but is not yet included in a QA build; run 'git flow release build'
+
+Release cannot be finalized.
+```
+
+A few of these check names describe concepts Git Flow Plus tracks no
+dedicated flag for, so they're grounded in the closest real, derivable
+fact instead of a second approval system:
+
+- **Features finalized** — nothing left in `Manifest.Features.Pending`
+  (approved, but not yet added to or deferred from the release).
+- **Features approved** — a distinct integrity check: every feature the
+  manifest already lists as `Included` must still resolve, in the
+  Feature Registry, to at least `Approved` — catches registry/manifest
+  drift, since `release feature add` itself can never produce this.
+- **QA status valid** — not an "approved build" flag (none exists); the
+  manifest's build history must be internally consistent with the live
+  version (the latest recorded build matches the current QA iteration
+  and version string).
+- **No conflicting release state** — the manifest's recorded branch
+  matches the currently configured staging branch. Git Flow Plus only
+  ever tracks one active release at a time by construction (`release
+  start` refuses a second one), so this is the one place drift between
+  the manifest and live config could otherwise go unnoticed.
+
+---
+
 ## `git flow release feature list`
 
 Lists every feature in the Feature Registry that has reached at least
