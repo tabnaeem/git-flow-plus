@@ -3,6 +3,7 @@ package gitflow_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/tabnaeem/git-flow-plus/internal/config"
@@ -396,15 +397,15 @@ func TestDoctorReportsBranchExistsError(t *testing.T) {
 
 	found := false
 	for _, c := range report.Checks {
-		if c.Name == "main branch" {
+		if c.Name == "main" {
 			found = true
 			if c.OK {
-				t.Error("'main branch' check OK = true, want false when BranchExists errors")
+				t.Error("'main' check OK = true, want false when BranchExists errors")
 			}
 		}
 	}
 	if !found {
-		t.Error("Doctor() did not include a 'main branch' check")
+		t.Error("Doctor() did not include a 'main' check")
 	}
 }
 
@@ -414,15 +415,15 @@ func TestDoctorReportsStatusError(t *testing.T) {
 
 	found := false
 	for _, c := range report.Checks {
-		if c.Name == "working tree" {
+		if c.Name == "Working Tree" {
 			found = true
 			if c.OK {
-				t.Error("'working tree' check OK = true, want false when Status errors")
+				t.Error("'Working Tree' check OK = true, want false when Status errors")
 			}
 		}
 	}
 	if !found {
-		t.Error("Doctor() did not include a 'working tree' check")
+		t.Error("Doctor() did not include a 'Working Tree' check")
 	}
 }
 
@@ -430,9 +431,119 @@ func TestDoctorReportsDirtyWorkingTree(t *testing.T) {
 	f := &fakeClient{status: func() (gitpkg.Status, error) { return gitpkg.Status{Clean: false, Porcelain: " M x"}, nil }}
 	report := newFakeService(f).Doctor(context.Background())
 
+	found := false
 	for _, c := range report.Checks {
-		if c.Name == "working tree" && c.Detail != "has uncommitted changes" {
-			t.Errorf("'working tree' detail = %q, want %q", c.Detail, "has uncommitted changes")
+		if c.Name == "Working Tree" {
+			found = true
+			if c.Detail != "has uncommitted changes" {
+				t.Errorf("'Working Tree' detail = %q, want %q", c.Detail, "has uncommitted changes")
+			}
 		}
+	}
+	if !found {
+		t.Error("Doctor() did not include a 'Working Tree' check")
+	}
+}
+
+func TestDoctorReportsUnsupportedGitVersion(t *testing.T) {
+	f := &fakeClient{version: func() (string, error) { return "git version 1.9.0", nil }}
+	report := newFakeService(f).Doctor(context.Background())
+
+	if report.Healthy() {
+		t.Error("Doctor().Healthy() = true with git 1.9.0 (below the minimum), want false")
+	}
+	found := false
+	for _, c := range report.Checks {
+		if c.Name == "Git" {
+			found = true
+			if c.OK {
+				t.Error("'Git' check OK = true for git 1.9.0, want false")
+			}
+		}
+	}
+	if !found {
+		t.Error("Doctor() did not include a 'Git' check")
+	}
+}
+
+func TestDoctorAcceptsSupportedGitVersion(t *testing.T) {
+	f := &fakeClient{version: func() (string, error) { return "git version 2.20.0", nil }}
+	report := newFakeService(f).Doctor(context.Background())
+
+	for _, c := range report.Checks {
+		if c.Name == "Git" && !c.OK {
+			t.Errorf("'Git' check OK = false for git 2.20.0 (exactly the minimum), detail = %q", c.Detail)
+		}
+	}
+}
+
+func TestDoctorReportsConfiguredRemote(t *testing.T) {
+	f := &fakeClient{configValue: func(key string) (string, error) {
+		if key == "remote.origin.url" {
+			return "https://github.com/example/repo.git", nil
+		}
+		return "", nil
+	}}
+	report := newFakeService(f).Doctor(context.Background())
+
+	found := false
+	for _, c := range report.Checks {
+		if c.Name == "Remote" {
+			found = true
+			if !c.OK {
+				t.Error("'Remote' check OK = false with a remote configured, want true")
+			}
+			if !strings.Contains(c.Detail, "https://github.com/example/repo.git") {
+				t.Errorf("'Remote' detail = %q, want it to mention the remote URL", c.Detail)
+			}
+		}
+	}
+	if !found {
+		t.Error("Doctor() did not include a 'Remote' check")
+	}
+}
+
+// A missing remote must never fail doctor - Git Flow Plus never requires
+// one (every push is a manual, separate step), and a freshly-`git flow
+// init`ed repository never has one configured.
+func TestDoctorReportsMissingRemoteAsInformationalOK(t *testing.T) {
+	f := &fakeClient{} // configValue defaults to "" - no remote
+	report := newFakeService(f).Doctor(context.Background())
+
+	found := false
+	for _, c := range report.Checks {
+		if c.Name == "Remote" {
+			found = true
+			if !c.OK {
+				t.Error("'Remote' check OK = false with no remote configured, want true (informational only)")
+			}
+		}
+	}
+	if !found {
+		t.Error("Doctor() did not include a 'Remote' check")
+	}
+	if !report.Healthy() {
+		t.Errorf("Doctor().Healthy() = false with no remote configured, want true; checks = %+v", report.Checks)
+	}
+}
+
+// TestDoctorReportsMissingGitBinary hides the real git binary from PATH
+// (t.Setenv reverts this automatically once the test finishes, and
+// nothing else runs concurrently in this package's tests, so this is
+// safely isolated) rather than requiring any real external service.
+func TestDoctorReportsMissingGitBinary(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	svc := gitflow.NewService(gitpkg.NewClient(gitpkg.NewExecRunner(), t.TempDir()), config.Default(), discardLogger())
+	report := svc.Doctor(context.Background())
+
+	if report.Healthy() {
+		t.Error("Doctor().Healthy() = true with git hidden from PATH, want false")
+	}
+	if len(report.Checks) != 1 {
+		t.Fatalf("Doctor() returned %d checks with git missing, want exactly 1 (early exit); checks = %+v", len(report.Checks), report.Checks)
+	}
+	if report.Checks[0].Name != "Git" || report.Checks[0].OK {
+		t.Errorf("Doctor().Checks[0] = %+v, want a failing 'Git' check", report.Checks[0])
 	}
 }

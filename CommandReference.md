@@ -446,18 +446,90 @@ git flow release manifest
 
 ## `git flow doctor`
 
-Colorized health checks, in order: git binary present, git version,
-valid repository, `main`/`staging`/`develop` branches present, working
-tree state, repository directory writable, `.gitflowplus/config.json`
-present, Git Flow Plus's own build version, whether `git-flow` resolves
-on `PATH` (required for `git flow ...` to work as a Git subcommand), and
-whether a release is currently in progress. Exits non-zero if any
-non-informational check fails — see
-[Troubleshooting.md](Troubleshooting.md) for what to do about each one.
+Checks whether the local environment is correctly configured for Git
+Flow Plus, grouped into sections. Exits non-zero if anything fails.
 
 ```bash
 git flow doctor
 ```
+
+```
+Git Flow Plus Doctor
+
+Environment
+────────────────────────
+
+Git                  ✓
+Git Flow Plus        ✓
+Repository           ✓
+Remote               ✓
+Configuration        ✓
+Working Tree         ✓
+Permissions          ✓
+
+Branch Model
+────────────────────────
+
+main                 ✓
+staging              ✓
+develop              ✓
+
+Release State
+────────────────────────
+
+Manifest             ✓
+
+Environment Status:
+READY
+```
+
+- **Environment** — git present and at a supported version (≥ 2.20;
+  chosen as a conservative floor, not a functional requirement — nothing
+  Git Flow Plus's own `git.Client` shells out to needs anything newer),
+  `git-flow` resolving on `PATH` (required for `git flow ...` to work as
+  a Git subcommand), the current path being a Git repository, whether an
+  `origin` remote is configured, `.gitflowplus/config.json` existing
+  *and* parsing successfully, working tree state, and directory
+  permissions. **Remote and Working Tree are informational only** — Git
+  Flow Plus never pushes/pulls automatically (that's always a manual,
+  separate step), so neither one ever fails the overall result.
+- **Branch Model** — `main`/`staging`/`develop` all exist.
+- **Release Tooling** — shown *only* when this repository's own files
+  say it needs them: a `go.mod` present checks for `go` on `PATH`; a
+  `.goreleaser.yaml`/`.yml` present checks for `goreleaser`; that file
+  containing an `sboms:` block also checks for `syft`. A typical Git Flow
+  Plus user managing an unrelated project never sees this section at
+  all — these are Git Flow Plus's *own* build-time dependencies, not a
+  requirement for using the tool.
+- **Release State** — reuses `git flow release status`'s own manifest
+  loading; no active release is a normal, healthy state.
+
+A corrupt `config.json` still shows every other check instead of
+aborting immediately — the failing check's detail explains what's wrong
+and (where applicable) how to fix it:
+
+```
+Git Flow Plus Doctor
+
+Environment
+────────────────────────
+
+Git                  ✓
+Git Flow Plus        ✓
+Repository           ✓
+Remote               ✓
+Configuration        ✗
+  Configuration file is missing. Run 'git flow init'. (expected at .gitflowplus/config.json)
+Working Tree         ✓
+Permissions          ✓
+...
+
+Environment Status:
+NOT READY
+```
+
+See [Troubleshooting.md](Troubleshooting.md) for what to do about each
+failing check.
 
 ---
 

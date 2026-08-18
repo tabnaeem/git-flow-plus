@@ -10,13 +10,19 @@ usage questions, see [DeveloperGuide.md](DeveloperGuide.md) or
 git flow doctor
 ```
 
-Colorized pass/fail for: Git present and its version, whether you're in
-a Git repository, `main`/`staging`/`develop` branch presence, working
-tree state, repository write permissions, `.gitflowplus/config.json`
-presence, Git Flow Plus's own build version, whether `PATH` is set up
-correctly, and whether a release is currently in progress. Every failure
-line includes a specific, actionable detail message — read that first;
-the sections below cover the ones worth expanding on.
+Sectioned pass/fail: **Environment** (Git present and at a supported
+version, `git-flow` resolving on `PATH`, being in a Git repository,
+remote presence — informational only, never fails — configuration
+existing and parsing, working tree state, repository write permissions),
+**Branch Model** (`main`/`staging`/`develop` presence), **Release
+Tooling** (Go/GoReleaser/Syft — shown only when this repository's own
+files, e.g. `go.mod`/`.goreleaser.yaml`, say it needs them), and
+**Release State** (whether release.json, if any, is readable). Every
+failing check's detail line is printed underneath it, and is usually
+specific and actionable — read that first; the sections below cover the
+ones worth expanding on. See
+[CommandReference.md#git-flow-doctor](CommandReference.md#git-flow-doctor)
+for a full example of both a passing and a failing report.
 
 ## "`git flow` is not a git command"
 
@@ -28,7 +34,7 @@ named `git-<word>` exists somewhere on `PATH`. Confirm with:
 git flow doctor
 ```
 
-and look at the `PATH` line specifically. If it reports `FAIL`:
+and look at the `Git Flow Plus` line under **Environment** specifically. If it reports `✗`:
 
 - **Installed via the Windows/macOS installer or a Linux package**: this
   shouldn't happen — every installer places (or symlinks) a `git-flow`
@@ -104,7 +110,7 @@ assuming the Node warning explains it.
 
 ## "permission denied" running `git flow doctor`'s permissions check
 
-The `permissions` check fails if the repository directory itself isn't
+The `Permissions` check fails if the repository directory itself isn't
 writable — check you actually own the directory and aren't, for
 example, working inside a read-only mounted path or a directory owned
 by another user (common in shared/CI environments run as the wrong

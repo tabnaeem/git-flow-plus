@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -1022,9 +1023,15 @@ func TestDoctorHealthyAfterInit(t *testing.T) {
 	if err := run(t, app, "doctor"); err != nil {
 		t.Fatalf("run(doctor) error = %v, want a clean bill of health after init; output:\n%s", err, out.String())
 	}
-	for _, want := range []string{"gitflowplus config", "staging branch", "git version", "permissions", "git flow plus version", "PATH", "release configuration"} {
+	for _, want := range []string{
+		"Git Flow Plus Doctor",
+		"Environment", "Git", "Git Flow Plus", "Repository", "Remote", "Configuration", "Working Tree", "Permissions",
+		"Branch Model", "main", "staging", "develop",
+		"Release State", "Manifest",
+		"Environment Status:", "READY",
+	} {
 		if !bytes.Contains(out.Bytes(), []byte(want)) {
-			t.Errorf("doctor output = %q, want it to include a %q check", out.String(), want)
+			t.Errorf("doctor output = %q, want it to include %q", out.String(), want)
 		}
 	}
 }
@@ -1035,6 +1042,165 @@ func TestDoctorFailsBeforeInit(t *testing.T) {
 	err := run(t, app, "doctor")
 	if err == nil {
 		t.Fatal("run(doctor) before init = nil error, want failure")
+	}
+}
+
+// 2. Missing configuration: a real Git repository, but `git flow init`
+// was never run - config.json is missing specifically, distinct from
+// "not a repository at all" (TestDoctorFailsBeforeInit).
+func TestDoctorReportsMissingConfiguration(t *testing.T) {
+	app, out, _ := testApp(t)
+	if err := app.GitClient().Init(context.Background()); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	out.Reset()
+
+	err := run(t, app, "doctor")
+	if err == nil {
+		t.Fatal("run(doctor) with no config.json = nil error, want failure")
+	}
+	for _, want := range []string{"Configuration", "Configuration file is missing", "git flow init", "NOT READY"} {
+		if !bytes.Contains(out.Bytes(), []byte(want)) {
+			t.Errorf("doctor output = %q, want it to contain %q", out.String(), want)
+		}
+	}
+}
+
+// 4. Missing Git Flow Plus: `git flow init` succeeded, but "git-flow"
+// itself isn't resolvable, so `git flow ...` wouldn't work as a Git
+// subcommand. PATH is deliberately narrowed to just the real git
+// binary's own directory - not simply "don't call stubGitFlowOnPath" -
+// since this host machine may genuinely have a git-flow-plus build
+// sitting on its real PATH from earlier, unrelated testing.
+func TestDoctorReportsGitFlowPlusNotOnPath(t *testing.T) {
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git binary not available on PATH")
+	}
+	t.Setenv("PATH", filepath.Dir(gitPath))
+
+	app, out, _ := testApp(t)
+	mustRun(t, app, "init")
+	out.Reset()
+
+	err = run(t, app, "doctor")
+	if err == nil {
+		t.Fatal("run(doctor) with git-flow not on PATH = nil error, want failure")
+	}
+	if !bytes.Contains(out.Bytes(), []byte("Git Flow Plus")) {
+		t.Errorf("doctor output = %q, want it to mention the Git Flow Plus check", out.String())
+	}
+}
+
+// 5. Missing remote: doctor must report it, but never fail because of
+// it - Git Flow Plus has no automatic push/pull step, so a repository
+// that's never been pushed anywhere is a normal, healthy state.
+func TestDoctorReportsMissingRemoteWithoutFailing(t *testing.T) {
+	stubGitFlowOnPath(t)
+	app, out, _ := testApp(t)
+	mustRun(t, app, "init")
+	out.Reset()
+
+	if err := run(t, app, "doctor"); err != nil {
+		t.Fatalf("run(doctor) with no remote configured = error %v, want nil (a remote is optional)", err)
+	}
+	for _, want := range []string{"Remote", "READY"} {
+		if !bytes.Contains(out.Bytes(), []byte(want)) {
+			t.Errorf("doctor output = %q, want it to contain %q", out.String(), want)
+		}
+	}
+}
+
+// 6. Invalid configuration: config.json exists but isn't valid JSON.
+func TestDoctorReportsInvalidConfiguration(t *testing.T) {
+	app, out, _ := testApp(t)
+	mustRun(t, app, "init")
+
+	if err := os.WriteFile(config.Path(app.RepoPath), []byte("{not valid json"), 0o644); err != nil {
+		t.Fatalf("writing corrupt config.json: %v", err)
+	}
+	out.Reset()
+
+	err := run(t, app, "doctor")
+	if err == nil {
+		t.Fatal("run(doctor) with a corrupt config.json = nil error, want failure")
+	}
+	for _, want := range []string{"Configuration", "could not be parsed", "NOT READY"} {
+		if !bytes.Contains(out.Bytes(), []byte(want)) {
+			t.Errorf("doctor output = %q, want it to contain %q", out.String(), want)
+		}
+	}
+}
+
+// 7. Missing optional tooling: no go.mod or .goreleaser.yaml in this
+// repository, so the entire "Release Tooling" section must be omitted
+// rather than reporting Go/GoReleaser/Syft as failures nobody asked for.
+func TestDoctorOmitsReleaseToolingWhenNotRelevant(t *testing.T) {
+	stubGitFlowOnPath(t)
+	app, out, _ := testApp(t)
+	mustRun(t, app, "init")
+	out.Reset()
+
+	if err := run(t, app, "doctor"); err != nil {
+		t.Fatalf("run(doctor) error = %v, want nil; output:\n%s", err, out.String())
+	}
+	if bytes.Contains(out.Bytes(), []byte("Release Tooling")) {
+		t.Errorf("doctor output = %q, want no 'Release Tooling' section for a non-Go, non-GoReleaser repository", out.String())
+	}
+}
+
+// TestDoctorShowsReleaseToolingWhenRelevant is the companion case: once
+// the repository signals it needs these tools (go.mod, .goreleaser.yaml
+// with an sboms: block), the section appears and is checked for real.
+func TestDoctorShowsReleaseToolingWhenRelevant(t *testing.T) {
+	stubGitFlowOnPath(t)
+	app, out, _ := testApp(t)
+	mustRun(t, app, "init")
+
+	if err := os.WriteFile(filepath.Join(app.RepoPath, "go.mod"), []byte("module example\n\ngo 1.23\n"), 0o644); err != nil {
+		t.Fatalf("writing go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(app.RepoPath, ".goreleaser.yaml"), []byte("version: 2\nsboms:\n  - id: archives\n"), 0o644); err != nil {
+		t.Fatalf("writing .goreleaser.yaml: %v", err)
+	}
+	out.Reset()
+
+	_ = run(t, app, "doctor") // may fail if goreleaser/syft genuinely aren't installed on this machine - that's real, correct behavior
+	for _, want := range []string{"Release Tooling", "Go", "GoReleaser", "Syft"} {
+		if !bytes.Contains(out.Bytes(), []byte(want)) {
+			t.Errorf("doctor output = %q, want it to mention %q now that this repo needs it", out.String(), want)
+		}
+	}
+}
+
+// 8. Invalid branch model: one of the three permanent branches is
+// missing.
+func TestDoctorReportsInvalidBranchModel(t *testing.T) {
+	stubGitFlowOnPath(t)
+	app, out, _ := testApp(t)
+	mustRun(t, app, "init")
+	ctx := context.Background()
+
+	cfg, err := app.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if err := app.GitClient().Checkout(ctx, cfg.Branches.Main); err != nil {
+		t.Fatalf("checking out main: %v", err)
+	}
+	if err := app.GitClient().DeleteBranch(ctx, cfg.Branches.Develop, true); err != nil {
+		t.Fatalf("deleting develop: %v", err)
+	}
+	out.Reset()
+
+	err = run(t, app, "doctor")
+	if err == nil {
+		t.Fatal("run(doctor) with the develop branch missing = nil error, want failure")
+	}
+	for _, want := range []string{"Branch Model", "develop", "NOT READY"} {
+		if !bytes.Contains(out.Bytes(), []byte(want)) {
+			t.Errorf("doctor output = %q, want it to contain %q", out.String(), want)
+		}
 	}
 }
 

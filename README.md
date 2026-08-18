@@ -174,6 +174,7 @@ environment variables — see
 
 ```bash
 git flow init                          # main, staging, develop
+git flow doctor                        # confirm Git/PATH/branches/config are all set up correctly
 
 git flow feature start LOGIN           # feature/LOGIN, from staging (not develop) — registers LOGIN as Created
 # ...commit, push, open a pull request. There is no `feature finish` —

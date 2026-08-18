@@ -571,7 +571,7 @@ func TestDoctorHealthyRepo(t *testing.T) {
 	if len(report.Checks) == 0 {
 		t.Fatal("Doctor() returned no checks")
 	}
-	for _, name := range []string{"git version", "permissions"} {
+	for _, name := range []string{"Git", "Permissions"} {
 		found := false
 		for _, c := range report.Checks {
 			if c.Name == name {
@@ -596,15 +596,15 @@ func TestDoctorReportsUnwritableRepo(t *testing.T) {
 	}
 	found := false
 	for _, c := range report.Checks {
-		if c.Name == "permissions" {
+		if c.Name == "Permissions" {
 			found = true
 			if c.OK {
-				t.Error("'permissions' check OK = true, want false")
+				t.Error("'Permissions' check OK = true, want false")
 			}
 		}
 	}
 	if !found {
-		t.Error("Doctor() did not include a 'permissions' check")
+		t.Error("Doctor() did not include a 'Permissions' check")
 	}
 }
 
@@ -621,15 +621,15 @@ func TestDoctorNotARepo(t *testing.T) {
 	}
 	found := false
 	for _, c := range report.Checks {
-		if c.Name == "git repository" {
+		if c.Name == "Repository" {
 			found = true
 			if c.OK {
-				t.Error("'git repository' check OK = true, want false")
+				t.Error("'Repository' check OK = true, want false")
 			}
 		}
 	}
 	if !found {
-		t.Error("Doctor() did not include a 'git repository' check")
+		t.Error("Doctor() did not include a 'Repository' check")
 	}
 }
 

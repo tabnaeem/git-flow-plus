@@ -46,9 +46,12 @@ type InitResult struct {
 
 // DoctorCheck is a single health check result.
 type DoctorCheck struct {
-	Name   string
-	OK     bool
-	Detail string
+	// Section groups related checks for display (e.g. "Environment",
+	// "Branch Model") — see `git flow doctor`'s renderer in internal/cli.
+	Section string
+	Name    string
+	OK      bool
+	Detail  string
 }
 
 // DoctorReport is the full set of health checks for a repository.

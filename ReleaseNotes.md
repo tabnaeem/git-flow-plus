@@ -8,6 +8,31 @@ starting changelog rather than a single undifferentiated diff.
 
 ## Unreleased
 
+### `git flow doctor` (this milestone)
+
+Rewrote `git flow doctor` from a flat `[STATUS] name detail` list into a
+sectioned report (**Environment**, **Branch Model**, **Release
+Tooling**, **Release State**), ending in a plain "Environment Status:
+READY"/"NOT READY" verdict. New checks:
+
+- **Git version supported** — a minimum-version floor (≥ 2.20) instead
+  of just reporting whatever version is installed with no pass/fail.
+- **Remote configured** — informational only; a missing `origin` never
+  fails doctor, since Git Flow Plus never pushes/pulls automatically.
+- **Configuration valid**, distinct from merely existing — a corrupt
+  `config.json` no longer aborts the whole command before any other
+  check runs; it becomes one failing check among a full report.
+- **Release Tooling** (Go/GoReleaser/Syft) — shown *only* when this
+  repository's own files (`go.mod`, `.goreleaser.yaml`) say it needs
+  them, never as a blanket requirement for every Git Flow Plus user.
+- **Release State** — reuses `git flow release status`'s existing
+  manifest loading (Phase 1) rather than adding a second validation path.
+
+No change to `gitflow.Service`'s `Doctor()` signature or its
+early-exit-on-prerequisite-failure behavior; `gitflow.DoctorCheck`
+gained one additive `Section` field for grouping. See
+[CommandReference.md#git-flow-doctor](CommandReference.md#git-flow-doctor).
+
 ### `git flow release validate` (this milestone)
 
 Added `git flow release validate`: a read-only pre-flight for `git flow
